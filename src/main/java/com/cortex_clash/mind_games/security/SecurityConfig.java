@@ -44,6 +44,9 @@ public class SecurityConfig {
                                 // Health probes for the load balancer / orchestrator.
                                 "/actuator/health",
                                 "/actuator/health/**",
+                                // Spring ERROR-dispatches thrown exceptions here; without this the
+                                // filter chain denies the dispatch and every error becomes a blank 403.
+                                "/error",
                                 "/api/ping",
                                 "/api/v1/register",
                                 "/api/v1/authenticate_user",

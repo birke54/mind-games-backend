@@ -20,5 +20,5 @@ import jakarta.validation.constraints.Size;
 public record RegisterUserRequest(
         @NotBlank @Size(max = User.USERNAME_MAX_LENGTH) String username,
         @NotBlank String password,
-        @NotBlank @Size(max = User.EMAIL_MAX_LENGTH) @Email(regexp = "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$\n") String email
+        @NotBlank @Size(max = User.EMAIL_MAX_LENGTH) @Email(regexp = "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$") String email
 ) {}
