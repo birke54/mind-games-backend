@@ -21,7 +21,7 @@
       "environment": [
         { "name":  "JWT_EXPIRATION_MINUTES", "value": "15"},
         { "name": "JWT_REFRESH_EXPIRATION_DAYS", "value": "30" },
-        { "name": "DB_URL", "value": "jdbc:mysql://mind-games-dev-db.c9ysoic22e9q.us-west-2.rds.amazonaws.com:3306/mindgames?sslMode=VERIFY_IDENTITY&serverTimezone=UTC&characterEncoding=utf8" },
+        { "name": "DB_URL", "value": "jdbc:mysql://mind-games-dev-db.c9ysoic22e9q.us-west-2.rds.amazonaws.com:3306/mind_games_dev?sslMode=VERIFY_IDENTITY&serverTimezone=UTC&characterEncoding=utf8" },
         { "name": "COOKIE_SECURE", "value": "true" },
         { "name": "SECURITY_LOCKOUT_THRESHOLD", "value": "5" },
         { "name": "BOARD_GRADING_MIN_THRESHOLD", "value": "43" },
@@ -34,13 +34,13 @@
       ],
       "secrets": [
         { "name": "JWT_SECRET",  "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:dev/mind-games-dev/jwt-signing-secret-qbiiIA:JWT_SECRET::" },
-        { "name": "DB_USERNAME", "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:rds!db-2a94a3fc-051c-4463-808c-37e5c622936e-AnXHVH:username::" },
-        { "name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:rds!db-2a94a3fc-051c-4463-808c-37e5c622936e-AnXHVH:password::" }
+        { "name": "DB_USERNAME", "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:rds!db-e4dbe456-c9b7-499f-9b0f-806a20879b31-IhuHYj:username::" },
+        { "name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:rds!db-e4dbe456-c9b7-499f-9b0f-806a20879b31-IhuHYj:password::" }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
-          "awslogs-group": "/ecs/mind-games",
+          "awslogs-group": "/ecs/dev/mind-games",
           "awslogs-region": "us-west-2",
           "awslogs-stream-prefix": "app"
         }
