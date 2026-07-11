@@ -19,6 +19,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # TEMPORARY: prints the OIDC token's claims (never the token) to compare against the
+      # role's trust policy. Remove once role assumption works.
+      - name: Debug OIDC claims
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, urllib.request
+
+          url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=sts.amazonaws.com"
+          req = urllib.request.Request(
+              url,
+              headers={"Authorization": "bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]},
+          )
+          token = json.load(urllib.request.urlopen(req))["value"]
+
+          payload = token.split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+
+          for key in ("iss", "aud", "sub", "repository", "repository_owner", "ref", "event_name"):
+              print(f"{key} = {claims.get(key)!r}")
+          PY
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
