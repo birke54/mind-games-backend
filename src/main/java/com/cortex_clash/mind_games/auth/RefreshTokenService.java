@@ -1,0 +1,206 @@
+package com.cortex_clash.mind_games.auth;
+
+import com.cortex_clash.mind_games.api.ApiController;
+import com.cortex_clash.mind_games.domain.RefreshToken;
+import com.cortex_clash.mind_games.domain.User;
+import com.cortex_clash.mind_games.security.JwtService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import javax.security.auth.login.CredentialException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Base64;
+import java.util.HexFormat;
+import java.util.UUID;
+
+/**
+ * Issues, rotates, and revokes refresh tokens. Refresh tokens are opaque high-entropy strings
+ * (not JWTs) stored only as SHA-256 hashes so they can be looked up and revoked server-side.
+ *
+ * <p>Rotation: each successful refresh revokes the presented token and issues a replacement in
+ * the same family. Presenting an already-revoked token is treated as theft and revokes the
+ * whole family, forcing re-login.
+ */
+@Service
+public class RefreshTokenService {
+    /**
+     * Logger instance for this service.
+     */
+    private static final Logger log = LoggerFactory.getLogger(RefreshTokenService.class);
+
+    /**
+     * Number of random bytes to generate for each token (256 bits of entropy).
+     */
+    private static final int TOKEN_BYTES = 32; // 256 bits of entropy
+
+    /**
+     * Repository for persisting and querying refresh tokens.
+     */
+    private final RefreshTokenRepository refreshTokenRepository;
+
+    /**
+     * Repository for querying user entities.
+     */
+    private final UserRepository userRepository;
+
+    /**
+     * Service for issuing access JWT tokens.
+     */
+    private final JwtService jwtService;
+
+    /**
+     * Number of days before a refresh token expires.
+     */
+    private final long refreshExpirationDays;
+
+    /**
+     * Cryptographically secure random number generator for token generation.
+     */
+    private final SecureRandom secureRandom = new SecureRandom();
+
+    /**
+     * Constructs a new RefreshTokenService with required dependencies.
+     *
+     * @param refreshTokenRepository repository for refresh token operations
+     * @param userRepository         repository for user operations
+     * @param jwtService             service for generating access tokens
+     * @param refreshExpirationDays  token validity period in days from configuration
+     */
+    public RefreshTokenService(RefreshTokenRepository refreshTokenRepository,
+                               UserRepository userRepository,
+                               JwtService jwtService,
+                               @Value("${app.jwt.refresh-expiration-days}") long refreshExpirationDays) {
+        this.refreshTokenRepository = refreshTokenRepository;
+        this.userRepository = userRepository;
+        this.jwtService = jwtService;
+        this.refreshExpirationDays = refreshExpirationDays;
+    }
+
+    /** Issues a brand-new refresh token in a fresh family. Returns the raw token for the client. */
+    @Transactional
+    public String issue(User user) {
+        return issueInFamily(user, UUID.randomUUID().toString());
+    }
+
+    /**
+     * Validates the presented refresh token and rotates it: the old token is revoked and a new
+     * one (plus a new access JWT) is returned. Detects reuse and locked accounts.
+     */
+    @Transactional
+    public TokenPair rotate(String rawToken) throws CredentialException {
+        RefreshToken stored = refreshTokenRepository.findByTokenHash(sha256(rawToken))
+                .orElse(null);
+        if (stored == null) {
+            log.warn("Invalid refresh token");
+            throw new CredentialException("Invalid refresh token");
+        }
+        User user = userRepository.findById(stored.getUserId())
+            .orElse(null);
+        if (user == null) {
+            log.warn("Refresh token for unknown: userId {}, familyId {}", stored.getUserId(), stored.getFamilyId());
+            throw new CredentialException("Refresh token for unknown user");
+        }
+        if (stored.getRevokedAt() != null) {
+            // A superseded token was replayed — likely stolen. Revoke the entire lineage.
+            log.warn("Refresh token reuse detected: userId {}, familyId {}", stored.getUserId(), stored.getFamilyId());
+            refreshTokenRepository.revokeFamily(stored.getFamilyId(), Instant.now());
+            throw new CredentialException("Refresh token reuse detected");
+        }
+        if (stored.getExpiresAt().isBefore(Instant.now())) {
+            log.warn("Refresh token expired: userId {}, familyId {}", stored.getUserId(), stored.getFamilyId());
+            throw new CredentialException("Refresh token expired");
+        }
+        if (user.isLockedOut()) {
+            log.warn("Account locked for user: {}", user.getUsername());
+            refreshTokenRepository.revokeAllActiveForUser(stored.getUserId(), Instant.now());
+            throw new CredentialException("Account is locked");
+        }
+
+        stored.revoke();
+        stored.markUsed();
+        refreshTokenRepository.save(stored);
+
+        String newRefreshToken = issueInFamily(user, stored.getFamilyId());
+        log.info("Refresh token rotated for user: {}", user.getUsername());
+        return new TokenPair(jwtService.issueToken(user), newRefreshToken);
+    }
+
+    /** Revokes a single refresh token (logout of the current session). No-op if unknown. */
+    @Transactional
+    public void revoke(String rawToken) {
+        refreshTokenRepository.findByTokenHash(sha256(rawToken)).ifPresent(token -> {
+            if (token.getRevokedAt() == null) {
+                token.revoke();
+                refreshTokenRepository.save(token);
+                log.info("Refresh token revoked for user: {}", token.getUserId());
+            }
+        });
+    }
+
+    /** Revokes every active refresh token for a user (e.g. on lockout or password change). */
+    @Transactional
+    public void revokeAllForUser(Integer userId) {
+        refreshTokenRepository.revokeAllActiveForUser(userId, Instant.now());
+        log.info("All active refresh tokens revoked for user: {}", userId);
+    }
+
+    /** The refresh token lifetime, used to set the cookie's Max-Age. */
+    public Duration refreshTokenTtl() {
+        return Duration.ofDays(refreshExpirationDays);
+    }
+
+    /**
+     * Issues a new refresh token within an existing token family.
+     *
+     * @param user the user for whom to issue the token
+     * @param familyId the family identifier to group related tokens
+     * @return the raw token string to be sent to the client
+     */
+    private String issueInFamily(User user, String familyId) {
+        String rawToken = generateRawToken();
+        RefreshToken token = new RefreshToken(
+                user.getId(),
+                familyId,
+                sha256(rawToken),
+                Instant.now().plus(refreshExpirationDays, ChronoUnit.DAYS));
+        refreshTokenRepository.save(token);
+        log.info("New refresh token issued for user: {}, familyId: {}", user.getUsername(), familyId);
+        return rawToken;
+    }
+
+    /**
+     * Generates a cryptographically secure random token string.
+     *
+     * @return a URL-safe base64-encoded token with 256 bits of entropy
+     */
+    private String generateRawToken() {
+        byte[] bytes = new byte[TOKEN_BYTES];
+        secureRandom.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    /**
+     * Computes the SHA-256 hash of the given string.
+     *
+     * @param value the string to hash
+     * @return hexadecimal representation of the hash
+     * @throws IllegalStateException if SHA-256 algorithm is not available
+     */
+    private static String sha256(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 not available", e);
+        }
+    }
+}

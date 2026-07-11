@@ -1,0 +1,81 @@
+spring:
+  application:
+    name: mind-games-backend
+  # Cap each graceful-shutdown phase so the app finishes draining within ECS's 30s SIGKILL grace.
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
+  datasource:
+    # TODO: replace with the real connection string (or set the DB_URL env var).
+    # Format: jdbc:mysql://<host>:<port>/<database>?<params>
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      pool-name: mind-games-pool
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000 # 30s
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+
+# Trust X-Forwarded-* headers from the upstream API gateway / TLS-terminating proxy so
+# scheme, isSecure(), and redirect URLs reflect the original HTTPS request. Only safe when a
+# trusted proxy overwrites these headers on the way in.
+server:
+  forward-headers-strategy: framework
+  # Let in-flight requests finish when ECS sends SIGTERM (deploys/scale-in) before the JVM exits.
+  shutdown: graceful
+
+# Only the health endpoint is exposed over HTTP. Kubernetes-style liveness/readiness probes are
+# enabled so orchestrators/load balancers can distinguish "process up" from "ready for traffic".
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+
+app:
+  jwt:
+    # HMAC-SHA256 signing key: Base64-encoded, at least 32 bytes (256 bits).
+    # Generate one with:  openssl rand -base64 32
+    # No default on purpose — the app must be given a real secret via JWT_SECRET.
+    secret: ${JWT_SECRET}
+    expiration-minutes: ${JWT_EXPIRATION_MINUTES}
+    # Refresh token (persistent login) lifetime. Sliding: rotated on every /refresh.
+    refresh-expiration-days: ${JWT_REFRESH_EXPIRATION_DAYS}
+    # Cron for purging expired refresh-token rows (Spring 6-field cron). Default: daily 03:00.
+    refresh-cleanup-cron: ${JWT_REFRESH_CLEANUP_CRON:0 0 3 * * *}
+  security:
+    # Secure flag on the refresh cookie. Set to false for local development over plain HTTP,
+    # otherwise the browser will not send the cookie back.
+    cookie-secure: ${COOKIE_SECURE:true}
+    lockout-threshold: ${SECURITY_LOCKOUT_THRESHOLD}
+  board_grading:
+    min_threshold: ${BOARD_GRADING_MIN_THRESHOLD}
+    easy_threshold: ${BOARD_GRADING_EASY_MAX_THRESHOLD}
+    moderate_threshold: ${BOARD_GRADING_MODERATE_MAX_THRESHOLD}
+    hard_threshold: ${BOARD_GRADING_HARD_MAX_THRESHOLD}
+  board_generation:
+    # Target pool size per difficulty; a refill tops the difficulty back up to this count.
+    pregeneration-board-count: ${BOARD_GENERATION_PREGENERATION_BOARD_COUNT}
+    # Refill is only triggered once a difficulty's available count drops below this.
+    low-watermark: ${BOARD_GENERATION_LOW_WATERMARK}
+    # How many times to retry generation for a single board before giving up on it.
+    max-attempts-per-board: ${BOARD_GENERATION_MAX_ATTEMPTS_PER_BOARD}
+    # Spring 6-field cron for the pool-monitor / refill check. Default: every 5 minutes.
+    refill-cron: ${BOARD_GENERATION_REFILL_CRON:0 */5 * * * *}

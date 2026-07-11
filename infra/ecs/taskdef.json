@@ -1,0 +1,49 @@
+{
+  "family": "mind-games-backend",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::851725201833:role/mind-games-exec",
+  "taskRoleArn": "arn:aws:iam::851725201833:role/mind-games-task",
+  "containerDefinitions": [
+    {
+      "name": "mind-games-backend",
+      "image": "851725201833.dkr.ecr.us-west-2.amazonaws.com/mind-games-backend:latest",
+      "essential": true,
+      "portMappings": [
+        { "containerPort": 8080, "protocol": "tcp" }
+      ],
+      "environment": [
+        { "name":  "JWT_EXPIRATION_MINUTES", "value": "15"},
+        { "name": "DB_URL", "value": "jdbc:mysql://mind-games-dev-db.c9ysoic22e9q.us-west-2.rds.amazonaws.com:3306/mindgames?sslMode=VERIFY_IDENTITY&serverTimezone=UTC&characterEncoding=utf8" },
+        { "name": "COOKIE_SECURE", "value": "true" },
+        { "name": "SECURITY_LOCKOUT_THRESHOLD", "value": "5" },
+        { "name": "BOARD_GRADING_MIN_THRESHOLD", "value": "43" },
+        { "name": "BOARD_GRADING_EASY_MAX_THRESHOLD", "value": "52" },
+        { "name": "BOARD_GRADING_MODERATE_MAX_THRESHOLD", "value": "72" },
+        { "name": "BOARD_GRADING_HARD_MAX_THRESHOLD", "value": "92" },
+        { "name": "BOARD_GENERATION_PREGENERATION_BOARD_COUNT", "value": "10" },
+        { "name": "BOARD_GENERATION_LOW_WATERMARK", "value": "5" },
+        { "name": "BOARD_GENERATION_MAX_ATTEMPTS_PER_BOARD", "value": "5"}
+      ],
+      "secrets": [
+        { "name": "JWT_SECRET",  "valueFrom": "JWT_SECRET_ARN" },
+        { "name": "DB_USERNAME", "valueFrom": "MASTER_SECRET_ARN:username::" },
+        { "name": "DB_PASSWORD", "valueFrom": "MASTER_SECRET_ARN:password::" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/mind-games",
+          "awslogs-region": "us-west-2",
+          "awslogs-stream-prefix": "app"
+        }
+      }
+    }
+  ]
+}
