@@ -65,6 +65,11 @@ app:
     # otherwise the browser will not send the cookie back.
     cookie-secure: ${COOKIE_SECURE:true}
     lockout-threshold: ${SECURITY_LOCKOUT_THRESHOLD}
+    # Shared secret CloudFront injects as X-Origin-Verify, proving the request came through the
+    # distribution (and therefore through WAF) rather than straight at the execute-api URL.
+    # Blank disables the check — the default, so local runs and a pre-CloudFront deploy still work.
+    # Generate with:  openssl rand -base64 32
+    origin-verify-secret: ${ORIGIN_VERIFY_SECRET:}
   board_grading:
     min_threshold: ${BOARD_GRADING_MIN_THRESHOLD}
     easy_threshold: ${BOARD_GRADING_EASY_MAX_THRESHOLD}

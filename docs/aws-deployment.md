@@ -289,8 +289,14 @@ INTEG_ID=$(aws apigatewayv2 create-integration --api-id $API_ID \
   --integration-uri $LISTENER_ARN --payload-format-version 1.0 \
   --query IntegrationId --output text)
 
-aws apigatewayv2 create-route --api-id $API_ID \
-  --route-key 'ANY /{proxy+}' --target integrations/$INTEG_ID
+# The catch-all serves everything. The named routes exist so they can carry their own
+# throttle bucket (see §11a) — they all share the one integration above.
+for RK in 'ANY /{proxy+}' \
+          'POST /api/v1/register' \
+          'POST /api/v1/authenticate_user'; do
+  aws apigatewayv2 create-route --api-id $API_ID \
+    --route-key "$RK" --target integrations/$INTEG_ID
+done
 
 aws apigatewayv2 create-stage --api-id $API_ID --stage-name '$default' --auto-deploy
 ```
@@ -301,8 +307,56 @@ The default invoke URL is printed by:
 aws apigatewayv2 get-api --api-id $API_ID --query ApiEndpoint --output text
 ```
 
+Route keys are **method-specific**: `POST /api/v1/register` does not match a `GET`, and a request
+that matches no route gets API Gateway's own `404 {"message":"Not Found"}` — no backend headers on
+the response, which is how you tell a routing miss from an application 404. A route created without
+`--target` still *wins* the match and then fails with a 500, so it shadows the catch-all rather than
+falling through to it. Audit with:
+
+```bash
+aws apigatewayv2 get-routes --api-id $API_ID \
+  --query 'Items[].{Route:RouteKey,Target:Target}' --output table
+```
+
 For a real domain: request an **ACM cert**, `create-domain-name`, and `create-api-mapping`.
-Throttling, WAF, and JWT authorizers attach to the HTTP API stage if you want them later.
+
+---
+
+## 11a. Per-route throttling
+
+Throttling attaches to the **stage**, keyed by route key. `--route-settings` replaces the whole map,
+so always pass every route you want configured, not just the new one:
+
+```bash
+aws apigatewayv2 update-stage --api-id $API_ID --stage-name '$default' \
+  --default-route-settings '{"ThrottlingRateLimit":100,"ThrottlingBurstLimit":200,"DetailedMetricsEnabled":true}' \
+  --route-settings '{
+    "POST /api/v1/register":          {"ThrottlingRateLimit":1,"ThrottlingBurstLimit":3},
+    "POST /api/v1/authenticate_user": {"ThrottlingRateLimit":5,"ThrottlingBurstLimit":10}
+  }'
+```
+
+Rate is sustained requests/second, burst is token-bucket depth. Over the limit the gateway returns
+429 without touching the ALB.
+
+> **This bucket is shared across all callers.** It caps aggregate load on the backend, but a single
+> abusive IP can consume the entire per-route budget and lock everyone else out. It is *not*
+> per-client rate limiting.
+
+Per-caller limits are not available on an HTTP API: API keys and usage plans are REST-API-only, and
+**AWS WAF cannot be associated with an HTTP API** (`apigatewayv2`). The options, in order of least
+disruption:
+
+- **WAF on the ALB.** Associates fine with an internal ALB. Use a rate-based rule with
+  `ForwardedIPConfig` set to read `X-Forwarded-For` — from the ALB's perspective every request
+  arrives from the VPC Link ENIs, so without that the per-IP counters collapse into one.
+- **CloudFront + WAF** in front of the gateway. Adds edge caching; adds a hop.
+- **In-app** (e.g. Bucket4j). The only layer that can limit by *user identity* rather than IP, and
+  the right place for per-account rules — but the request has already cost you an ECS request.
+
+A **Lambda authorizer** (REQUEST type, with result caching) can reject unauthenticated traffic at the
+gateway. The native JWT authorizer will not work here: it requires an OIDC issuer with a JWKS
+endpoint, and this app signs its own HMAC tokens with jjwt.
 
 ---
 
@@ -312,11 +366,86 @@ Throttling, WAF, and JWT authorizers attach to the HTTP API stage if you want th
 API=$(aws apigatewayv2 get-api --api-id $API_ID --query ApiEndpoint --output text)
 curl -s $API/actuator/health          # {"status":"UP"}
 curl -s $API/api/ping                  # public endpoint
+
+# Register (public). 201 + {"username":"..."} on success, 409 on a duplicate.
+curl -i -X POST "$API/api/v1/register" -H 'Content-Type: application/json' \
+  -d '{"username":"testuser","password":"hunter2password","email":"testuser@example.com"}'
 ```
+
+Read the *headers* to locate a failure, not just the status:
+
+| Symptom | Where it came from |
+|---|---|
+| `404 {"message":"Not Found"}`, only an `apigw-requestid` header | API Gateway — no route matched that method+path |
+| `500`, no backend headers | route matched but has no integration target |
+| Any status carrying `x-frame-options` / `x-content-type-options` | reached Spring; it's an application response |
 
 Also confirm in **CloudWatch Logs** (`/ecs/mind-games`) that:
 - Flyway ran the migration (`V1__Initial_schema`),
 - the board-pool refill logged its first run within ~5 minutes.
+
+---
+
+## 13. CloudFront + custom domain + WAF
+
+```
+viewer ──► CloudFront ──┬── default behavior ──► S3 (frontend, private, OAC)
+           (+ WAF)      └── /api/* behavior ───► API Gateway ──► VPC Link ──► ALB
+```
+
+CloudFront is what makes per-IP rate limiting possible at all: **WAF cannot attach to an HTTP API**,
+and on the ALB it would see only the VPC Link ENIs, collapsing every caller into one counter. On
+CloudFront it sees the real viewer IP.
+
+**Certificate.** ACM, **us-east-1 only** — CloudFront reads certs from no other region, and one
+issued in `us-west-2` will not appear in the distribution's dropdown. Request `cortexclash.org` plus
+`*.cortexclash.org` on a single cert so future hostnames need no new validation.
+
+**DNS (Namecheap).** Namecheap **auto-appends the domain to the Host field**. For an ACM validation
+record named `_1aee….cortexclash.org`, enter Host = `_1aee…` alone; pasting the full name silently
+creates `_1aee….cortexclash.org.cortexclash.org` and the cert sits in *Pending validation* forever.
+Delete Namecheap's default parking records (`CNAME www → parkingpage.namecheap.com` and the URL
+redirect) or they win over the records you add. Apex needs Namecheap's own **ALIAS** type (a CNAME at
+`@` is illegal DNS); `www` is a plain CNAME. Both point at `<dist>.cloudfront.net`.
+
+**Origin (API).** Domain `q3wkefts09.execute-api.us-west-2.amazonaws.com`, HTTPS only, **origin path
+empty** — CloudFront *prepends* origin path, so `/api` there turns `/api/ping` into `/api/api/ping`.
+Add a custom header `X-Origin-Verify: <secret>` (see below).
+
+**`/api/*` behavior.** The two settings that break this if you get them wrong:
+
+- **Cache policy `CachingDisabled`** — every endpoint is authenticated and per-user; caching would
+  serve one user's boards to another.
+- **Origin request policy `AllViewerExceptHostHeader`** — forwards `Authorization`, cookies and query
+  strings, which is what keeps bearer tokens and the refresh cookie alive. Note *ExceptHostHeader*:
+  plain `AllViewer` forwards the viewer's `Host` (your domain) to execute-api, which does not
+  recognize it and answers **403** — indistinguishable from an auth failure at a glance.
+- Allowed methods must include POST/PUT/PATCH/DELETE; the default is GET/HEAD only.
+
+**WAF.** Create the ACL yourself (us-east-1, scope *CloudFront*) with a rate-based rule — limit 500
+per 5 min, aggregate on Source IP, Block — rather than using the create-distribution wizard's
+"security protections", which builds a *second* ACL with managed rules and no rate limit. A
+distribution can hold only one ACL. Managed rule groups can false-positive on JSON bodies; add them
+in **Count** mode first.
+
+**Closing the bypass.** execute-api stays publicly reachable, so anyone with that URL skips CloudFront
+and therefore skips WAF. CloudFront injects `X-Origin-Verify` on every origin request (and strips any
+same-named header from the viewer, so it cannot be forged); `OriginVerificationFilter` rejects
+anything arriving without it. `/actuator/**` is exempt — the ALB health-checks the container directly
+and never traverses CloudFront, and without the exemption ECS would fail every check and kill tasks in
+a loop.
+
+**Deploy order matters.** The filter is disabled while `ORIGIN_VERIFY_SECRET` is blank, so:
+
+1. Create the distribution with the custom header, and confirm traffic works through the domain.
+2. *Then* store the secret and add it to `taskdef.json` alongside `JWT_SECRET`:
+   ```json
+   { "name": "ORIGIN_VERIFY_SECRET", "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:dev/mind-games-dev/origin-verify-secret-XXXX:ORIGIN_VERIFY_SECRET::" }
+   ```
+3. Redeploy. Direct calls to execute-api now return 403 — including any test scripts still pointed
+   at it.
+
+`infra/cloudfront/setup.sh` expresses the same thing as CLI calls.
 
 ---
 
@@ -327,4 +456,5 @@ Also confirm in **CloudWatch Logs** (`/ecs/mind-games`) that:
 - **Zero-downtime deploys**: with one task there's a brief gap on redeploy; ECS rolling deploy with
   `minimumHealthyPercent=100`/`maximumPercent=200` needs 2 tasks, which reintroduces the scheduler
   problem. Accept the gap, or solve scheduling first.
-- **RDS TLS verification**, custom domain, WAF, and API Gateway auth are left as hardening steps.
+- **RDS TLS verification** and API Gateway auth (a Lambda authorizer — the native JWT authorizer needs
+  an OIDC/JWKS issuer, and this app signs its own HMAC tokens) are left as hardening steps.

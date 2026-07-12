@@ -35,7 +35,8 @@
       "secrets": [
         { "name": "JWT_SECRET",  "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:dev/mind-games-dev/jwt-signing-secret-qbiiIA:JWT_SECRET::" },
         { "name": "DB_USERNAME", "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:rds!db-e4dbe456-c9b7-499f-9b0f-806a20879b31-IhuHYj:username::" },
-        { "name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:rds!db-e4dbe456-c9b7-499f-9b0f-806a20879b31-IhuHYj:password::" }
+        { "name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:rds!db-e4dbe456-c9b7-499f-9b0f-806a20879b31-IhuHYj:password::" },
+        { "name": "ORIGIN_VERIFY_SECRET", "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:dev/mind-games/origin-verify-secret-vFFflG:X-Origin-Verify::" }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",

@@ -2,7 +2,7 @@ name: Build and push to ECR
 
 on:
   push:
-    branches: [ main ]      # adjust to your default branch
+    branches: [ master ]
   workflow_dispatch:         # allow manual runs
 
 env:

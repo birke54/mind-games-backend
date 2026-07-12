@@ -35,3 +35,6 @@ out/
 
 ### VS Code ###
 .vscode/
+
+# curl cookie jar from manual API testing
+cookies.txt

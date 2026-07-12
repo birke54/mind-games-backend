@@ -87,7 +87,7 @@ public class ApiController {
      * Registers a new user account.
      *
      * @param request the registration request containing username, email, and password
-     * @return response containing the created username
+     * @return 201 (CREATED) with the created username
      * @throws ResponseStatusException with status 409 (CONFLICT) if username or email already exists
      * @throws ResponseStatusException with status 500 (INTERNAL_SERVER_ERROR) on unexpected errors
      */
@@ -101,7 +101,7 @@ public class ApiController {
         } catch (RuntimeException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, e.getMessage());
         }
-        return ResponseEntity.ok()
+        return ResponseEntity.status(HttpStatus.CREATED)
                 .body(Map.of("username", user.getUsername()));
     }
 
