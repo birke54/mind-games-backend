@@ -8,13 +8,13 @@ import org.springframework.stereotype.Component;
 
 /**
  * Writes the reset link to the log instead of emailing it. Active while
- * {@code app.password-reset.mailer} is {@code log}, which is the default until an SMTP
- * implementation lands.
+ * {@code app.password-reset.mailer} is {@code log}, which is the default, and so the mailer you get
+ * when nothing is configured — local development, and tests that do not care about mail.
  *
- * <p>This exists so the token flow can ship before mail does. It is a stand-in, and it is not a
- * safe one for production: <strong>the log line contains a live account-takeover secret</strong>,
- * readable by anyone with access to CloudWatch. Hence the warning level — this should be noisy, and
- * it should be embarrassing to leave switched on.
+ * <p>It is not a safe one for a deployed environment: <strong>the log line contains a live
+ * account-takeover secret</strong>, readable by anyone with access to CloudWatch. Hence the warning
+ * level — this should be noisy, and it should be embarrassing to leave switched on. Deployments set
+ * the mailer to {@code smtp} and get {@link SmtpPasswordResetMailer} instead.
  */
 @Component
 @ConditionalOnProperty(name = "app.password-reset.mailer", havingValue = "log", matchIfMissing = true)

@@ -30,10 +30,16 @@
         { "name": "BOARD_GRADING_HARD_MAX_THRESHOLD", "value": "92" },
         { "name": "BOARD_GENERATION_PREGENERATION_BOARD_COUNT", "value": "5" },
         { "name": "BOARD_GENERATION_LOW_WATERMARK", "value": "2" },
-        { "name": "BOARD_GENERATION_MAX_ATTEMPTS_PER_BOARD", "value": "3"}
+        { "name": "BOARD_GENERATION_MAX_ATTEMPTS_PER_BOARD", "value": "3"},
+        { "name": "PASSWORD_RESET_MAILER", "value": "smtp" },
+        { "name": "MAIL_HOST", "value": "email-smtp.us-west-2.amazonaws.com" },
+        { "name": "MAIL_PORT", "value": "587" },
+        { "name": "PASSWORD_RESET_URL", "value": "https://cortexclash.org/reset-password" }
       ],
       "secrets": [
         { "name": "JWT_SECRET",  "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:dev/mind-games-dev/jwt-signing-secret-qbiiIA:JWT_SECRET::" },
+        { "name": "MAIL_USERNAME", "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:dev/mind-games/ses-smtp-xfiaco:username::" },
+        { "name": "MAIL_PASSWORD", "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:dev/mind-games/ses-smtp-xfiaco:password::" },
         { "name": "DB_USERNAME", "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:rds!db-e4dbe456-c9b7-499f-9b0f-806a20879b31-IhuHYj:username::" },
         { "name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:rds!db-e4dbe456-c9b7-499f-9b0f-806a20879b31-IhuHYj:password::" },
         { "name": "ORIGIN_VERIFY_SECRET", "valueFrom": "arn:aws:secretsmanager:us-west-2:851725201833:secret:dev/mind-games/origin-verify-secret-vFFflG:X-Origin-Verify::" }

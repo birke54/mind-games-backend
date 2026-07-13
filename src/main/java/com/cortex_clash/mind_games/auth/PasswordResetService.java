@@ -117,7 +117,17 @@ public class PasswordResetService {
                 new UserAudit(user.getUsername(), AuditAction.PASSWORD_RESET_REQUESTED));
 
         // The raw token leaves here and is never recoverable again: only its hash was stored.
-        mailer.sendResetLink(user, resetUrl + "?token=" + rawToken);
+        try {
+            mailer.sendResetLink(user, resetUrl + "?token=" + rawToken);
+        } catch (RuntimeException e) {
+            // A failed send must not propagate. If it did, an address with an account would answer
+            // 500 while one without still answered 202 — restoring the exact enumeration oracle
+            // this endpoint is built to deny, and handing it to anyone who can knock the mail host
+            // over. The user sees the same 202 either way and can ask for another link; we get a
+            // log line to alarm on. The token row stays: it is harmless, and it expires in minutes.
+            log.error("Password reset email failed to send for user: {}", user.getUsername(), e);
+            return;
+        }
         log.info("Password reset link issued for user: {}", user.getUsername());
     }
 

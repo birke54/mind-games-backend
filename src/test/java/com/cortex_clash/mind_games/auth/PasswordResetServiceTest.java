@@ -25,6 +25,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -133,6 +134,22 @@ class PasswordResetServiceTest {
 
         verify(tokenRepository).save(any(PasswordResetToken.class));
         verify(mailer).sendResetLink(any(User.class), anyString());
+    }
+
+    @Test
+    void aFailedSendDoesNotSurfaceToTheCaller() {
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(alice()));
+        doThrow(new IllegalStateException("SES is down"))
+                .when(mailer).sendResetLink(any(User.class), anyString());
+
+        // The point: this does not throw. If it did, the controller would answer 500 for an address
+        // that has an account and 202 for one that does not — the exact enumeration oracle the
+        // endpoint exists to deny, handed to anyone able to knock the mail host over.
+        service.requestReset(EMAIL);
+
+        // The token row stays behind. It is harmless on its own — the raw token only ever existed
+        // in the mail that failed to send — and it expires in minutes.
+        verify(tokenRepository).save(any(PasswordResetToken.class));
     }
 
     // ---- redeeming a reset -------------------------------------------------
