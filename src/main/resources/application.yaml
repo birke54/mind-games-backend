@@ -60,6 +60,21 @@ app:
     refresh-expiration-days: ${JWT_REFRESH_EXPIRATION_DAYS}
     # Cron for purging expired refresh-token rows (Spring 6-field cron). Default: daily 03:00.
     refresh-cleanup-cron: ${JWT_REFRESH_CLEANUP_CRON:0 0 3 * * *}
+  password-reset:
+    # A reset link is a live account-takeover secret sitting in an inbox. Short by design.
+    token-expiration-minutes: ${PASSWORD_RESET_TOKEN_EXPIRATION_MINUTES:30}
+    # Per-user cap. Without one, the endpoint is an anonymous email cannon aimed at any address
+    # someone cares to type. Requests past the cap are dropped silently (still a 202) — saying
+    # "rate limited" would leak that the address has an account.
+    max-requests-per-hour: ${PASSWORD_RESET_MAX_REQUESTS_PER_HOUR:3}
+    # Front-end route the emailed link points at; the raw token is appended as ?token=...
+    reset-url: ${PASSWORD_RESET_URL:https://cortexclash.org/reset-password}
+    # How the link is delivered. `log` writes it to the log instead of sending it, which is how the
+    # token flow runs before SES is wired up — see docs/password-reset.md. Switch to the SMTP
+    # mailer once it exists; leaving this on `log` in production puts live reset links in CloudWatch.
+    mailer: ${PASSWORD_RESET_MAILER:log}
+    # Cron for purging expired reset-token rows (Spring 6-field cron). Default: daily 03:30.
+    cleanup-cron: ${PASSWORD_RESET_CLEANUP_CRON:0 30 3 * * *}
   security:
     # Secure flag on the refresh cookie. Set to false for local development over plain HTTP,
     # otherwise the browser will not send the cookie back.

@@ -51,7 +51,11 @@ public class SecurityConfig {
                                 "/api/v1/register",
                                 "/api/v1/authenticate_user",
                                 "/api/v1/refresh",
-                                "/api/v1/logout").permitAll()
+                                "/api/v1/logout",
+                                // Password reset: a user who needs these cannot authenticate, by
+                                // definition. The reset token is the credential.
+                                "/api/v1/request_password_reset",
+                                "/api/v1/reset_password").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(new JwtAuthenticationFilter(jwtService, userRepository),
                         UsernamePasswordAuthenticationFilter.class);

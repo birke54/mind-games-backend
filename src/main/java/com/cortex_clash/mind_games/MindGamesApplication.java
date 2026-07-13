@@ -6,8 +6,10 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Application entry point. {@code @EnableScheduling} activates the {@code @Scheduled} jobs —
- * the board-pool refill ({@link com.cortex_clash.mind_games.generate.BoardGenerationService}) and
- * the refresh-token cleanup ({@link com.cortex_clash.mind_games.auth.RefreshTokenCleanupJob}).
+ * the board-pool refill ({@link com.cortex_clash.mind_games.generate.BoardGenerationService}), the
+ * refresh-token cleanup ({@link com.cortex_clash.mind_games.auth.RefreshTokenCleanupJob}), and the
+ * password-reset-token cleanup
+ * ({@link com.cortex_clash.mind_games.auth.PasswordResetTokenCleanupJob}).
  */
 @SpringBootApplication
 @EnableScheduling

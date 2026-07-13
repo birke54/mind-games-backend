@@ -8,10 +8,14 @@ import java.util.Map;
 
 import com.cortex_clash.mind_games.api.requests.AuthenticateUser;
 import com.cortex_clash.mind_games.api.requests.RegisterUserRequest;
+import com.cortex_clash.mind_games.api.requests.RequestPasswordReset;
+import com.cortex_clash.mind_games.api.requests.ResetPassword;
 import com.cortex_clash.mind_games.api.requests.SaveBoardProgress;
 import com.cortex_clash.mind_games.api.responses.BoardResponse;
 import com.cortex_clash.mind_games.auth.AuthService;
 import com.cortex_clash.mind_games.auth.InvalidPasswordException;
+import com.cortex_clash.mind_games.auth.InvalidResetTokenException;
+import com.cortex_clash.mind_games.auth.PasswordResetService;
 import com.cortex_clash.mind_games.auth.RefreshTokenService;
 import com.cortex_clash.mind_games.auth.TokenPair;
 import com.cortex_clash.mind_games.domain.User;
@@ -60,16 +64,19 @@ public class ApiController {
 
     private final AuthService authService;
     private final RefreshTokenService refreshTokenService;
+    private final PasswordResetService passwordResetService;
     private final BoardService boardService;
 
     /** Secure flag on the refresh cookie; disable only for local HTTP development. */
     private final boolean cookieSecure;
 
     public ApiController(AuthService authService, RefreshTokenService refreshTokenService,
+                         PasswordResetService passwordResetService,
                          BoardService boardService,
                          @Value("${app.security.cookie-secure:true}") boolean cookieSecure) {
         this.authService = authService;
         this.refreshTokenService = refreshTokenService;
+        this.passwordResetService = passwordResetService;
         this.boardService = boardService;
         this.cookieSecure = cookieSecure;
     }
@@ -182,6 +189,62 @@ public class ApiController {
         return ResponseEntity.noContent()
                 .header(HttpHeaders.SET_COOKIE, clearingCookie().toString())
                 .build();
+    }
+
+    /**
+     * Emails a password-reset link to the address given, if it belongs to an account.
+     *
+     * <p><strong>Always answers 202, with an empty body.</strong> Not "202 on success" — 202 for a
+     * registered address, an unregistered one, a rate-limited one, and a string that is not an
+     * email address at all. {@code users.email} is UNIQUE, so an address confirmed to exist is an
+     * account confirmed to exist: any response that varies with the input turns this endpoint into
+     * a user-enumeration oracle, and it is reachable by anyone on the internet. The service is
+     * written to make no distinction and this handler has no branch in it, both on purpose.
+     *
+     * @param request the address to send a reset link to
+     * @return 202 (ACCEPTED), unconditionally
+     */
+    @PostMapping("/v1/request_password_reset")
+    public ResponseEntity<Void> requestPasswordReset(@Valid @RequestBody RequestPasswordReset request) {
+        passwordResetService.requestReset(request.email());
+        return ResponseEntity.accepted().build();
+    }
+
+    /**
+     * Redeems a reset token and sets a new password. On success every existing session is revoked
+     * and any lockout is cleared, so the user can immediately log in with the new password — and
+     * only with the new password, on every device.
+     *
+     * <p>The caller is not signed in as a result. A reset proves control of an inbox, not intent to
+     * start a session, and the user has just been logged out everywhere on purpose.
+     *
+     * <p>Both failures answer 400 but say different things, because the user does something
+     * different about each: a bad link means request a new one, a rejected password means pick a
+     * better one. The message is returned in the body rather than as a
+     * {@link ResponseStatusException} reason because Spring Boot's default
+     * ({@code server.error.include-message: never}) strips the reason from the response, which
+     * would leave the client with a bare 400 and nothing to render — the same reason
+     * {@code /v1/refresh} builds its error body by hand.
+     *
+     * <p>The three ways a token can be bad — unknown, used, expired — are deliberately <em>not</em>
+     * distinguished. "That token was already used" confirms to whoever holds a stolen link that it
+     * was real, and the legitimate user's next step is the same in all three cases.
+     *
+     * @param request the raw token from the emailed link, and the new password
+     * @return 204 (NO_CONTENT) on success; 400 (BAD_REQUEST) with an {@code error} message if the
+     *         token is unknown, used, or expired, or the new password fails the password policy
+     */
+    @PostMapping("/v1/reset_password")
+    public ResponseEntity<Map<String, String>> resetPassword(@Valid @RequestBody ResetPassword request) {
+        try {
+            passwordResetService.resetPassword(request.token(), request.password());
+        } catch (InvalidResetTokenException e) {
+            return ResponseEntity.badRequest().body(Map.of("error",
+                    "This password reset link is invalid or has expired. Please request a new one."));
+        } catch (InvalidPasswordException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+        return ResponseEntity.noContent().build();
     }
 
     /**

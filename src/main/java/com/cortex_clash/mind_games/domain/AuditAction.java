@@ -25,7 +25,15 @@ public enum AuditAction {
     /**
      * Represents a user account lockout event.
      */
-    LOCKOUT("lockout");
+    LOCKOUT("lockout"),
+    /**
+     * Represents a password reset being requested for an account.
+     */
+    PASSWORD_RESET_REQUESTED("password_reset_requested"),
+    /**
+     * Represents a reset token being redeemed and the password actually changed.
+     */
+    PASSWORD_RESET_COMPLETED("password_reset_completed");
 
     /**
      * The database representation of this audit action.
