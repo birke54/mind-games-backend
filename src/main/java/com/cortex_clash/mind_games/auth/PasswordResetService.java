@@ -5,10 +5,11 @@ import com.cortex_clash.mind_games.domain.PasswordResetToken;
 import com.cortex_clash.mind_games.domain.User;
 import com.cortex_clash.mind_games.domain.UserAudit;
 import com.cortex_clash.mind_games.domain.UserStatus;
-import com.cortex_clash.mind_games.mail.PasswordResetMailer;
+import com.cortex_clash.mind_games.mail.PasswordResetLinkIssued;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -45,7 +46,7 @@ public class PasswordResetService {
     private final UserRepository userRepository;
     private final UserAuditRepository userAuditRepository;
     private final RefreshTokenService refreshTokenService;
-    private final PasswordResetMailer mailer;
+    private final ApplicationEventPublisher events;
     private final PasswordEncoder passwordEncoder;
 
     /** How long a reset link stays redeemable. */
@@ -61,7 +62,7 @@ public class PasswordResetService {
                                 UserRepository userRepository,
                                 UserAuditRepository userAuditRepository,
                                 RefreshTokenService refreshTokenService,
-                                PasswordResetMailer mailer,
+                                ApplicationEventPublisher events,
                                 @Value("${app.password-reset.token-expiration-minutes}") long tokenExpirationMinutes,
                                 @Value("${app.password-reset.max-requests-per-hour}") int maxRequestsPerHour,
                                 @Value("${app.password-reset.reset-url}") String resetUrl) {
@@ -69,7 +70,7 @@ public class PasswordResetService {
         this.userRepository = userRepository;
         this.userAuditRepository = userAuditRepository;
         this.refreshTokenService = refreshTokenService;
-        this.mailer = mailer;
+        this.events = events;
         this.passwordEncoder = new BCryptPasswordEncoder();
         this.tokenExpirationMinutes = tokenExpirationMinutes;
         this.maxRequestsPerHour = maxRequestsPerHour;
@@ -78,7 +79,7 @@ public class PasswordResetService {
 
     /**
      * Begins a reset for whoever owns {@code email}: invalidates any outstanding token, issues a
-     * fresh one, and mails the link.
+     * fresh one, and raises {@link PasswordResetLinkIssued} so the link goes out.
      *
      * <p><strong>This method does not report whether the address has an account.</strong> It
      * returns normally either way, and the caller answers 202 either way. {@code users.email} is
@@ -86,6 +87,13 @@ public class PasswordResetService {
      * the two paths — a status code, a body, an error — turns this endpoint into a user-enumeration
      * oracle. The only thing that distinguishes them is that one of them sends an email, which is
      * unavoidable and is why the address's owner is the only person who learns anything.
+     *
+     * <p><strong>Response time is part of that.</strong> The send is not performed here — it is
+     * handed to {@link com.cortex_clash.mind_games.mail.PasswordResetMailDispatcher} on a pool
+     * thread — because doing it inline made the two paths take visibly different amounts of time: an
+     * unknown address returned after one SELECT, a known one after an SMTP round trip to SES. Same
+     * 202, same body, and an attacker with a stopwatch could tell them apart anyway. What remains is
+     * a few local writes against a difference that used to be a conversation with another host.
      *
      * <p>Requests beyond the hourly cap are likewise silently dropped: telling the caller they have
      * been rate-limited would leak the same fact.
@@ -116,18 +124,10 @@ public class PasswordResetService {
         userAuditRepository.save(
                 new UserAudit(user.getUsername(), AuditAction.PASSWORD_RESET_REQUESTED));
 
-        // The raw token leaves here and is never recoverable again: only its hash was stored.
-        try {
-            mailer.sendResetLink(user, resetUrl + "?token=" + rawToken);
-        } catch (RuntimeException e) {
-            // A failed send must not propagate. If it did, an address with an account would answer
-            // 500 while one without still answered 202 — restoring the exact enumeration oracle
-            // this endpoint is built to deny, and handing it to anyone who can knock the mail host
-            // over. The user sees the same 202 either way and can ask for another link; we get a
-            // log line to alarm on. The token row stays: it is harmless, and it expires in minutes.
-            log.error("Password reset email failed to send for user: {}", user.getUsername(), e);
-            return;
-        }
+        // The raw token leaves here and is never recoverable again: only its hash was stored. The
+        // dispatcher picks the event up after this transaction commits, so a send never races the
+        // row it depends on, and a failed one cannot reach the caller: it has already been answered.
+        events.publishEvent(new PasswordResetLinkIssued(user, resetUrl + "?token=" + rawToken));
         log.info("Password reset link issued for user: {}", user.getUsername());
     }
 

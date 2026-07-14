@@ -5,9 +5,10 @@ import com.cortex_clash.mind_games.domain.PasswordResetToken;
 import com.cortex_clash.mind_games.domain.User;
 import com.cortex_clash.mind_games.domain.UserAudit;
 import com.cortex_clash.mind_games.domain.UserStatus;
-import com.cortex_clash.mind_games.mail.PasswordResetMailer;
+import com.cortex_clash.mind_games.mail.PasswordResetLinkIssued;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -25,7 +26,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -44,11 +44,19 @@ class PasswordResetServiceTest {
     private final UserRepository userRepository = mock(UserRepository.class);
     private final UserAuditRepository userAuditRepository = mock(UserAuditRepository.class);
     private final RefreshTokenService refreshTokenService = mock(RefreshTokenService.class);
-    private final PasswordResetMailer mailer = mock(PasswordResetMailer.class);
+    private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
 
     private final PasswordResetService service = new PasswordResetService(
-            tokenRepository, userRepository, userAuditRepository, refreshTokenService, mailer,
+            tokenRepository, userRepository, userAuditRepository, refreshTokenService, events,
             30, 3, RESET_URL);
+
+    /** The link the service asked to have delivered, or a failure if it asked for no delivery. */
+    private PasswordResetLinkIssued publishedEvent() {
+        ArgumentCaptor<PasswordResetLinkIssued> event =
+                ArgumentCaptor.forClass(PasswordResetLinkIssued.class);
+        verify(events).publishEvent(event.capture());
+        return event.getValue();
+    }
 
     /**
      * A persisted-looking user. The id is set by reflection because JPA assigns it on insert and
@@ -70,22 +78,26 @@ class PasswordResetServiceTest {
     // ---- requesting a reset ------------------------------------------------
 
     @Test
-    void requestIssuesATokenAndMailsTheLink() {
+    void requestIssuesATokenAndAsksForTheLinkToBeMailed() {
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(alice()));
 
         service.requestReset(EMAIL);
 
         verify(tokenRepository).save(any(PasswordResetToken.class));
 
-        ArgumentCaptor<String> link = ArgumentCaptor.forClass(String.class);
-        verify(mailer).sendResetLink(any(User.class), link.capture());
-        assertTrue(link.getValue().startsWith(RESET_URL + "?token="),
+        // The service asks for the link to go out and returns; the send itself happens after commit,
+        // on a pool thread. That is what keeps a registered address from taking an SMTP round trip
+        // longer to answer than an unregistered one, which is the same enumeration oracle the
+        // identical 202s exist to deny, read off a clock instead of a response body.
+        PasswordResetLinkIssued issued = publishedEvent();
+        assertEquals(EMAIL, issued.recipient().getEmail());
+        assertTrue(issued.resetLink().startsWith(RESET_URL + "?token="),
                 "the emailed link must carry the raw token to the front-end route");
 
         // The raw token must never be recoverable from what we persisted.
         ArgumentCaptor<PasswordResetToken> saved = ArgumentCaptor.forClass(PasswordResetToken.class);
         verify(tokenRepository).save(saved.capture());
-        String rawToken = link.getValue().substring((RESET_URL + "?token=").length());
+        String rawToken = issued.resetLink().substring((RESET_URL + "?token=").length());
         assertEquals(OpaqueTokens.sha256(rawToken), saved.getValue().getTokenHash(),
                 "only the hash of the raw token is stored");
     }
@@ -99,7 +111,7 @@ class PasswordResetServiceTest {
         service.requestReset("stranger@example.com");
 
         verify(tokenRepository, never()).save(any());
-        verifyNoInteractions(mailer);
+        verifyNoInteractions(events);
     }
 
     @Test
@@ -121,7 +133,7 @@ class PasswordResetServiceTest {
         service.requestReset(EMAIL);
 
         verify(tokenRepository, never()).save(any());
-        verifyNoInteractions(mailer);
+        verifyNoInteractions(events);
     }
 
     @Test
@@ -133,23 +145,7 @@ class PasswordResetServiceTest {
         service.requestReset(EMAIL);
 
         verify(tokenRepository).save(any(PasswordResetToken.class));
-        verify(mailer).sendResetLink(any(User.class), anyString());
-    }
-
-    @Test
-    void aFailedSendDoesNotSurfaceToTheCaller() {
-        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(alice()));
-        doThrow(new IllegalStateException("SES is down"))
-                .when(mailer).sendResetLink(any(User.class), anyString());
-
-        // The point: this does not throw. If it did, the controller would answer 500 for an address
-        // that has an account and 202 for one that does not — the exact enumeration oracle the
-        // endpoint exists to deny, handed to anyone able to knock the mail host over.
-        service.requestReset(EMAIL);
-
-        // The token row stays behind. It is harmless on its own — the raw token only ever existed
-        // in the mail that failed to send — and it expires in minutes.
-        verify(tokenRepository).save(any(PasswordResetToken.class));
+        verify(events).publishEvent(any(PasswordResetLinkIssued.class));
     }
 
     // ---- redeeming a reset -------------------------------------------------
