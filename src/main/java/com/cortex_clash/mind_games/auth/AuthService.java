@@ -83,7 +83,9 @@ public class AuthService {
             throw new IllegalArgumentException("Email too long: " + email);
         }
         // TODO: Validate email is in a valid format.
-        // TODO: Validate password is a valid length/complexity.
+        // Same policy the reset flow enforces: a password you may register with is a password you
+        // may reset to, and vice versa.
+        PasswordPolicy.validate(password);
 
         // DB existence checks last (the UNIQUE constraint is the authoritative guard under races).
         if (userRepository.existsByUsername(username)) {
