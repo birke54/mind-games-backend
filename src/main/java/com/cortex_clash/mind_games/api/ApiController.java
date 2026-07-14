@@ -11,6 +11,7 @@ import com.cortex_clash.mind_games.api.requests.RegisterUserRequest;
 import com.cortex_clash.mind_games.api.requests.SaveBoardProgress;
 import com.cortex_clash.mind_games.api.responses.BoardResponse;
 import com.cortex_clash.mind_games.auth.AuthService;
+import com.cortex_clash.mind_games.auth.InvalidPasswordException;
 import com.cortex_clash.mind_games.auth.RefreshTokenService;
 import com.cortex_clash.mind_games.auth.TokenPair;
 import com.cortex_clash.mind_games.domain.User;
@@ -88,6 +89,8 @@ public class ApiController {
      *
      * @param request the registration request containing username, email, and password
      * @return 201 (CREATED) with the created username
+     * @throws ResponseStatusException with status 400 (BAD_REQUEST) if the password fails the
+     *                                 password policy
      * @throws ResponseStatusException with status 409 (CONFLICT) if username or email already exists
      * @throws ResponseStatusException with status 500 (INTERNAL_SERVER_ERROR) on unexpected errors
      */
@@ -96,6 +99,10 @@ public class ApiController {
         User user;
         try {
             user = authService.registerUser(request.username(), request.email(), request.password());
+        } catch (InvalidPasswordException e) {
+            // Caught ahead of IllegalArgumentException, which it extends: a weak password is a
+            // malformed request, not a collision with existing data.
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         } catch (IllegalArgumentException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
         } catch (RuntimeException e) {
