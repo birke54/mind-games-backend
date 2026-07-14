@@ -11,16 +11,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.security.auth.login.CredentialException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Base64;
-import java.util.HexFormat;
 import java.util.UUID;
+
+import static com.cortex_clash.mind_games.auth.OpaqueTokens.sha256;
 
 /**
  * Issues, rotates, and revokes refresh tokens. Refresh tokens are opaque high-entropy strings
@@ -36,11 +32,6 @@ public class RefreshTokenService {
      * Logger instance for this service.
      */
     private static final Logger log = LoggerFactory.getLogger(RefreshTokenService.class);
-
-    /**
-     * Number of random bytes to generate for each token (256 bits of entropy).
-     */
-    private static final int TOKEN_BYTES = 32; // 256 bits of entropy
 
     /**
      * Repository for persisting and querying refresh tokens.
@@ -61,11 +52,6 @@ public class RefreshTokenService {
      * Number of days before a refresh token expires.
      */
     private final long refreshExpirationDays;
-
-    /**
-     * Cryptographically secure random number generator for token generation.
-     */
-    private final SecureRandom secureRandom = new SecureRandom();
 
     /**
      * Constructs a new RefreshTokenService with required dependencies.
@@ -166,7 +152,7 @@ public class RefreshTokenService {
      * @return the raw token string to be sent to the client
      */
     private String issueInFamily(User user, String familyId) {
-        String rawToken = generateRawToken();
+        String rawToken = OpaqueTokens.generate();
         RefreshToken token = new RefreshToken(
                 user.getId(),
                 familyId,
@@ -175,32 +161,5 @@ public class RefreshTokenService {
         refreshTokenRepository.save(token);
         log.info("New refresh token issued for user: {}, familyId: {}", user.getUsername(), familyId);
         return rawToken;
-    }
-
-    /**
-     * Generates a cryptographically secure random token string.
-     *
-     * @return a URL-safe base64-encoded token with 256 bits of entropy
-     */
-    private String generateRawToken() {
-        byte[] bytes = new byte[TOKEN_BYTES];
-        secureRandom.nextBytes(bytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
-
-    /**
-     * Computes the SHA-256 hash of the given string.
-     *
-     * @param value the string to hash
-     * @return hexadecimal representation of the hash
-     * @throws IllegalStateException if SHA-256 algorithm is not available
-     */
-    private static String sha256(String value) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 not available", e);
-        }
     }
 }
