@@ -24,6 +24,12 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 	implementation 'org.springframework.security:spring-security-crypto'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	// Password reset mail. SMTP rather than the SES SDK on purpose: the raw reset token is never
+	// persisted, so the email is the only place it exists — speaking SMTP means CI can point at a
+	// Mailpit container, read the link back out, and test the happy path end to end. See
+	// mind-games-ui docs/password-reset.md §2 (the design lives with the Playwright spec that
+	// relies on it).
+	implementation 'org.springframework.boot:spring-boot-starter-mail'
 	implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
 	runtimeOnly   'io.jsonwebtoken:jjwt-impl:0.12.6'
 	runtimeOnly   'io.jsonwebtoken:jjwt-jackson:0.12.6'

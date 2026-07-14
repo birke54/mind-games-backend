@@ -27,6 +27,28 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: false
+  # Outbound mail. Production points at SES's SMTP endpoint
+  # (email-smtp.us-west-2.amazonaws.com:587, STARTTLS); CI points at a Mailpit container, which
+  # wants neither auth nor TLS — hence both being switchable rather than hard-coded. Unused unless
+  # app.password-reset.mailer is `smtp`.
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:587}
+    # SES SMTP authenticates with credentials, not the task's IAM role, so these come from Secrets
+    # Manager. They are NOT the IAM access key/secret — SES derives a separate SMTP password.
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:true}
+          starttls:
+            enable: ${MAIL_SMTP_STARTTLS:true}
+            required: ${MAIL_SMTP_STARTTLS:true}
+          # Don't let a wedged mail host hold an HTTP thread (or a DB transaction) open forever.
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
 
 # Trust X-Forwarded-* headers from the upstream API gateway / TLS-terminating proxy so
 # scheme, isSecure(), and redirect URLs reflect the original HTTPS request. Only safe when a
@@ -60,6 +82,28 @@ app:
     refresh-expiration-days: ${JWT_REFRESH_EXPIRATION_DAYS}
     # Cron for purging expired refresh-token rows (Spring 6-field cron). Default: daily 03:00.
     refresh-cleanup-cron: ${JWT_REFRESH_CLEANUP_CRON:0 0 3 * * *}
+  password-reset:
+    # A reset link is a live account-takeover secret sitting in an inbox. Short by design.
+    token-expiration-minutes: ${PASSWORD_RESET_TOKEN_EXPIRATION_MINUTES:30}
+    # Per-user cap. Without one, the endpoint is an anonymous email cannon aimed at any address
+    # someone cares to type. Requests past the cap are dropped silently (still a 202) — saying
+    # "rate limited" would leak that the address has an account.
+    max-requests-per-hour: ${PASSWORD_RESET_MAX_REQUESTS_PER_HOUR:3}
+    # Front-end route the emailed link points at; the raw token is appended as ?token=...
+    reset-url: ${PASSWORD_RESET_URL:https://cortexclash.org/reset-password}
+    # How the link is delivered: `smtp` to send it, `log` to write it to the log instead.
+    # `log` is the local-development default and MUST NOT be used in a deployed environment — the
+    # log line contains a live account-takeover secret. Deployments set this to `smtp`.
+    mailer: ${PASSWORD_RESET_MAILER:log}
+    # A verified SES *domain* identity authorises every address at that domain, so noreply@ is
+    # sendable with no mailbox behind it. Bounces do not need one either: with no custom MAIL FROM
+    # the envelope sender is amazonses.com, so bounces return to SES.
+    from: ${PASSWORD_RESET_FROM:Cortex Clash <noreply@cortexclash.org>}
+    # Replies, however, do need somewhere to land — people answer reset mail with "I didn't request
+    # this". Forwarded to a human via Namecheap (Domain → Redirect Email).
+    reply-to: ${PASSWORD_RESET_REPLY_TO:support@cortexclash.org}
+    # Cron for purging expired reset-token rows (Spring 6-field cron). Default: daily 03:30.
+    cleanup-cron: ${PASSWORD_RESET_CLEANUP_CRON:0 30 3 * * *}
   security:
     # Secure flag on the refresh cookie. Set to false for local development over plain HTTP,
     # otherwise the browser will not send the cookie back.
