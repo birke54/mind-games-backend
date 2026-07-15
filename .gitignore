@@ -38,3 +38,6 @@ out/
 
 # curl cookie jar from manual API testing
 cookies.txt
+
+# ecs task definition
+taskdef.json
