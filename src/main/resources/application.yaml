@@ -1,6 +1,12 @@
 spring:
   application:
     name: mind-games-backend
+  # Auth is entirely JWT-based (see JwtAuthenticationFilter); no UserDetailsService bean exists, so
+  # Spring Security would otherwise fall back to a generated in-memory `user` and log a "generated
+  # security password ... for development use only" warning on every startup. That user is never
+  # used, so drop the auto-config that creates it.
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
   # Cap each graceful-shutdown phase so the app finishes draining within ECS's 30s SIGKILL grace.
   lifecycle:
     timeout-per-shutdown-phase: 25s
