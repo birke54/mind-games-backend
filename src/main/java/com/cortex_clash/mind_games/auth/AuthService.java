@@ -85,7 +85,7 @@ public class AuthService {
         // TODO: Validate email is in a valid format.
         // Same policy the reset flow enforces: a password you may register with is a password you
         // may reset to, and vice versa.
-        PasswordPolicy.validate(password);
+        PasswordPolicy.validate(username, password, false, userRepository, passwordEncoder);
 
         // DB existence checks last (the UNIQUE constraint is the authoritative guard under races).
         if (userRepository.existsByUsername(username)) {

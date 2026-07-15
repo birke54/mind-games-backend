@@ -241,6 +241,24 @@ class PasswordResetServiceTest {
     }
 
     @Test
+    void resetToTheCurrentPasswordIsRejectedWithoutSpendingTheToken() {
+        User alice = alice(); // current password is "old password"
+        PasswordResetToken token = liveToken();
+        when(tokenRepository.findByTokenHash(anyString())).thenReturn(Optional.of(token));
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(alice));
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(alice));
+
+        // The point of this branch: resetting "back" to the password you already have is refused —
+        // and, like any rejected password, must not burn the link or kill the user's sessions.
+        assertThrows(InvalidPasswordException.class,
+                () -> service.resetPassword("raw-token", "old password"));
+
+        assertNull(token.getUsedAt());
+        verify(userRepository, never()).save(any());
+        verify(refreshTokenService, never()).revokeAllForUser(anyInt());
+    }
+
+    @Test
     void tokenTtlIsThirtyMinutes() {
         assertEquals(30, service.tokenTtl().toMinutes());
     }
