@@ -37,21 +37,11 @@ import org.springframework.web.server.ResponseStatusException;
 import javax.security.auth.login.CredentialException;
 
 /**
- * REST API controller providing authentication and user management endpoints.
+ * The application's single REST surface: registration, authentication, token refresh/logout,
+ * password reset, and dealing and saving boards.
  *
- * <p>This controller currently handles:
- * <ul>
- *   <li>User registration</li>
- *   <li>User authentication with JWT tokens</li>
- *   <li>Token refresh using HttpOnly cookies</li>
- *   <li>User logout and token revocation</li>
- *   <li>Serving a pregenerated board to the player</li>
- * </ul>
- *
- * <p>Refresh tokens are stored in secure, HttpOnly cookies scoped to {@code /api/v1}.
- * Access tokens are returned in response bodies as JSON.
- *
- * <p>Additional endpoints will be added as development progresses.</p>
+ * <p>Access tokens are returned in response bodies as JSON; refresh tokens are stored in secure,
+ * HttpOnly cookies scoped to {@code /api/v1}.
  */
 @RestController
 @RequestMapping("/api")

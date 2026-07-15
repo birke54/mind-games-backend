@@ -22,17 +22,11 @@ import java.time.Instant;
 @Table(name = "password_reset_tokens")
 public class PasswordResetToken {
 
-    /**
-     * The unique identifier for this reset token record.
-     */
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id")
     private Long id;
 
-    /**
-     * The id of the user this reset token belongs to.
-     */
     @Column(name = "user_id", nullable = false)
     private Integer userId;
 
@@ -43,9 +37,6 @@ public class PasswordResetToken {
     @Column(name = "token_hash", nullable = false, length = 64, unique = true)
     private String tokenHash;
 
-    /**
-     * The instant at which this token expires and can no longer be redeemed.
-     */
     @Column(name = "expires_at", nullable = false)
     private Instant expiresAt;
 
@@ -56,101 +47,52 @@ public class PasswordResetToken {
     @Column(name = "used_at")
     private Instant usedAt;
 
-    /**
-     * The instant this record was created. Managed by the database (DEFAULT CURRENT_TIMESTAMP).
-     */
+    /** Managed by the database (DEFAULT CURRENT_TIMESTAMP). */
     @Column(name = "created_at", insertable = false, updatable = false)
     private Instant createdAt;
 
-    /**
-     * Protected no-argument constructor required by JPA.
-     */
     protected PasswordResetToken() {
         // Required by JPA.
     }
 
-    /**
-     * Constructs a new reset token record for the given user.
-     *
-     * @param userId    the id of the user the token belongs to
-     * @param tokenHash the SHA-256 hex hash of the raw token
-     * @param expiresAt the instant the token expires
-     */
     public PasswordResetToken(Integer userId, String tokenHash, Instant expiresAt) {
         this.userId = userId;
         this.tokenHash = tokenHash;
         this.expiresAt = expiresAt;
     }
 
-    /**
-     * Whether this token can still be redeemed as of {@code now}: unused and unexpired.
-     *
-     * @param now the instant to evaluate against
-     * @return {@code true} if the token is neither used nor expired
-     */
+    /** Whether this token can still be redeemed as of {@code now}: unused and unexpired. */
     public boolean isRedeemable(Instant now) {
         return usedAt == null && expiresAt.isAfter(now);
     }
 
-    /**
-     * Marks this token as consumed. Idempotent: if it was already used, the original time stands.
-     */
+    /** Marks this token as consumed. Idempotent: if it was already used, the original time stands. */
     public void markUsed() {
         if (this.usedAt == null) {
             this.usedAt = Instant.now();
         }
     }
 
-    /**
-     * Returns the unique identifier of this reset token record.
-     *
-     * @return the record id
-     */
     public Long getId() {
         return id;
     }
 
-    /**
-     * Returns the id of the user this token belongs to.
-     *
-     * @return the user id
-     */
     public Integer getUserId() {
         return userId;
     }
 
-    /**
-     * Returns the SHA-256 hex hash of the raw token.
-     *
-     * @return the token hash
-     */
     public String getTokenHash() {
         return tokenHash;
     }
 
-    /**
-     * Returns the instant this token expires.
-     *
-     * @return the expiry timestamp
-     */
     public Instant getExpiresAt() {
         return expiresAt;
     }
 
-    /**
-     * Returns the instant this token was consumed, or {@code null} if it is still outstanding.
-     *
-     * @return the used timestamp, or {@code null}
-     */
     public Instant getUsedAt() {
         return usedAt;
     }
 
-    /**
-     * Returns the instant this record was created.
-     *
-     * @return the creation timestamp
-     */
     public Instant getCreatedAt() {
         return createdAt;
     }
