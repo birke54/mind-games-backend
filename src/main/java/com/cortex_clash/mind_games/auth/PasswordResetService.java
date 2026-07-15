@@ -178,7 +178,7 @@ public class PasswordResetService {
 
         // Validate before spending the token, so a rejected password does not cost the user their
         // link and force them back to their inbox.
-        PasswordPolicy.validate(newPassword);
+        PasswordPolicy.validate(user.getUsername(), newPassword, true, userRepository, passwordEncoder);
 
         token.markUsed();
         passwordResetTokenRepository.save(token);

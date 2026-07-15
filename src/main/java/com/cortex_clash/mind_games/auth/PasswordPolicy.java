@@ -1,6 +1,11 @@
 package com.cortex_clash.mind_games.auth;
 
+import com.cortex_clash.mind_games.domain.User;
+import jakarta.persistence.EntityNotFoundException;
+import org.springframework.security.crypto.password.PasswordEncoder;
+
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 
 /**
  * The one place a password is judged acceptable. Registration and password reset both go through
@@ -12,6 +17,9 @@ import java.nio.charset.StandardCharsets;
  * users toward {@code Password1!}. Length is what buys entropy.
  */
 public final class PasswordPolicy {
+
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
 
     /**
      * Minimum password length. Anything shorter is brute-forceable offline; {@code a} is currently
@@ -29,8 +37,22 @@ public final class PasswordPolicy {
      */
     public static final int MAX_LENGTH_BYTES = 72;
 
-    private PasswordPolicy() {
-        // Static utility.
+    private PasswordPolicy(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+        this.userRepository = userRepository;
+        this.passwordEncoder = passwordEncoder;
+    }
+
+    /**
+     * Static entry point for new user password validation.
+     *
+     * @param username       the username associated with the password of either a registration or a password reset
+     * @param password       the raw password
+     * @param isPasswordReset whether the password is being reset or registered
+     * @param userRepository the repository to query for existing user data
+     * @throws InvalidPasswordException if the password is null, blank, too short, or too long
+     */
+    public static void validate(String username, String password, Boolean isPasswordReset, UserRepository userRepository, PasswordEncoder passwordEncoder) {
+        new PasswordPolicy(userRepository, passwordEncoder).validateInstance(username, password, isPasswordReset);
     }
 
     /**
@@ -39,7 +61,7 @@ public final class PasswordPolicy {
      * @param password the raw password
      * @throws InvalidPasswordException if the password is null, blank, too short, or too long
      */
-    public static void validate(String password) {
+    private void validateInstance(String username, String password, Boolean isPasswordReset) {
         if (password == null || password.isBlank()) {
             throw new InvalidPasswordException("Password must not be blank");
         }
@@ -52,6 +74,13 @@ public final class PasswordPolicy {
         if (password.getBytes(StandardCharsets.UTF_8).length > MAX_LENGTH_BYTES) {
             throw new InvalidPasswordException(
                     "Password must be at most " + MAX_LENGTH_BYTES + " bytes");
+        }
+        if (isPasswordReset) {
+            Optional<User> existingUser = userRepository.findByUsername(username);
+            String existingPasswordHash = existingUser.map(User::getPasswordHash).orElse(null);
+            if (passwordEncoder.matches(password, existingPasswordHash)) {
+                throw new InvalidPasswordException("New password must be different from existing password");
+            }
         }
     }
 }
