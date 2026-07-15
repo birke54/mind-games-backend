@@ -1,0 +1,42 @@
+version: 2
+updates:
+  # Java dependencies in build.gradle. Grouped so a Spring Boot or Testcontainers
+  # bump lands as one PR across all its artifacts instead of several.
+  - package-ecosystem: gradle
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      spring-boot:
+        patterns:
+          - "org.springframework.boot:*"
+          - "io.spring.dependency-management:*"
+      spring-security:
+        patterns:
+          - "org.springframework.security:*"
+      testcontainers:
+        patterns:
+          - "org.testcontainers:*"
+      flyway:
+        patterns:
+          - "org.flywaydb:*"
+      jjwt:
+        patterns:
+          - "io.jsonwebtoken:*"
+
+  # Base images in the Dockerfile (eclipse-temurin:26-jdk / :26-jre).
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+
+  # Action versions pinned in .github/workflows. One grouped PR for all bumps.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
