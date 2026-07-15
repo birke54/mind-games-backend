@@ -15,35 +15,11 @@ import java.util.Optional;
 @Repository
 public interface UserRepository extends JpaRepository<User, Integer> {
 
-    /**
-     * Finds a user by their username.
-     *
-     * @param username the username to search for
-     * @return an {@link Optional} containing the user if found, or empty if not found
-     */
     Optional<User> findByUsername(String username);
 
-    /**
-     * Finds a user by their email address.
-     *
-     * @param email the email address to search for
-     * @return an {@link Optional} containing the user if found, or empty if not found
-     */
     Optional<User> findByEmail(String email);
 
-    /**
-     * Checks whether a user with the given username exists.
-     *
-     * @param username the username to check
-     * @return {@code true} if a user with the username exists, {@code false} otherwise
-     */
     boolean existsByUsername(String username);
 
-    /**
-     * Checks whether a user with the given email exists.
-     *
-     * @param email the email to check
-     * @return {@code true} if a user with the email exists, {@code false} otherwise
-     */
     boolean existsByEmail(String email);
 }

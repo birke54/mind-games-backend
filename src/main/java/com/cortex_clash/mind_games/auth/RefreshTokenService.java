@@ -28,39 +28,13 @@ import static com.cortex_clash.mind_games.auth.OpaqueTokens.sha256;
  */
 @Service
 public class RefreshTokenService {
-    /**
-     * Logger instance for this service.
-     */
     private static final Logger log = LoggerFactory.getLogger(RefreshTokenService.class);
 
-    /**
-     * Repository for persisting and querying refresh tokens.
-     */
     private final RefreshTokenRepository refreshTokenRepository;
-
-    /**
-     * Repository for querying user entities.
-     */
     private final UserRepository userRepository;
-
-    /**
-     * Service for issuing access JWT tokens.
-     */
     private final JwtService jwtService;
-
-    /**
-     * Number of days before a refresh token expires.
-     */
     private final long refreshExpirationDays;
 
-    /**
-     * Constructs a new RefreshTokenService with required dependencies.
-     *
-     * @param refreshTokenRepository repository for refresh token operations
-     * @param userRepository         repository for user operations
-     * @param jwtService             service for generating access tokens
-     * @param refreshExpirationDays  token validity period in days from configuration
-     */
     public RefreshTokenService(RefreshTokenRepository refreshTokenRepository,
                                UserRepository userRepository,
                                JwtService jwtService,
