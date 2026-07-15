@@ -39,5 +39,7 @@ out/
 # curl cookie jar from manual API testing
 cookies.txt
 
+# Local Claude Code guidance, not shared with the team
+CLAUDE.md
 # ecs task definition
 taskdef.json
