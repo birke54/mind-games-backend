@@ -14,7 +14,7 @@ class BoardGraderTest {
 
     // A verified-valid, fully solved grid (row-major).
     private static final String SOLVED =
-            "000020800804000603001005000000040090006000050020710006040003000900201030080000900";
+            "534678912672195348198342567859761423426853791713924856961537284287419635345286179";
 
     /** Parses an 81-char board string ('0' or '.' = empty) into a 9x9 grid. */
     private static int[][] parse(String s) {

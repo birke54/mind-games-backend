@@ -89,17 +89,19 @@ public class RefreshTokenService {
             log.warn("Invalid refresh token");
             throw new CredentialException("Invalid refresh token");
         }
+        if (stored.getRevokedAt() != null) {
+            // A superseded token was replayed — likely stolen. Revoke the entire lineage. This is
+            // checked before the user lookup: reuse detection is about the token's lineage and must
+            // not depend on the user still existing.
+            log.warn("Refresh token reuse detected: userId {}, familyId {}", stored.getUserId(), stored.getFamilyId());
+            refreshTokenRepository.revokeFamily(stored.getFamilyId(), Instant.now());
+            throw new CredentialException("Refresh token reuse detected");
+        }
         User user = userRepository.findById(stored.getUserId())
             .orElse(null);
         if (user == null) {
             log.warn("Refresh token for unknown: userId {}, familyId {}", stored.getUserId(), stored.getFamilyId());
             throw new CredentialException("Refresh token for unknown user");
-        }
-        if (stored.getRevokedAt() != null) {
-            // A superseded token was replayed — likely stolen. Revoke the entire lineage.
-            log.warn("Refresh token reuse detected: userId {}, familyId {}", stored.getUserId(), stored.getFamilyId());
-            refreshTokenRepository.revokeFamily(stored.getFamilyId(), Instant.now());
-            throw new CredentialException("Refresh token reuse detected");
         }
         if (stored.getExpiresAt().isBefore(Instant.now())) {
             log.warn("Refresh token expired: userId {}, familyId {}", stored.getUserId(), stored.getFamilyId());
