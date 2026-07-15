@@ -30,9 +30,9 @@ dependencies {
 	// mind-games-ui docs/password-reset.md §2 (the design lives with the Playwright spec that
 	// relies on it).
 	implementation 'org.springframework.boot:spring-boot-starter-mail'
-	implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
-	runtimeOnly   'io.jsonwebtoken:jjwt-impl:0.12.6'
-	runtimeOnly   'io.jsonwebtoken:jjwt-jackson:0.12.6'
+	implementation 'io.jsonwebtoken:jjwt-api:0.13.0'
+	runtimeOnly   'io.jsonwebtoken:jjwt-impl:0.13.0'
+	runtimeOnly   'io.jsonwebtoken:jjwt-jackson:0.13.0'
 	// Boot 4 ships each technology's auto-configuration in its own module: without
 	// spring-boot-flyway, flyway-core is on the classpath but nothing runs it, so migrations are
 	// silently skipped and `ddl-auto: validate` then fails against an empty schema.
