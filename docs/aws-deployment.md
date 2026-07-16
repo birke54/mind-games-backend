@@ -449,12 +449,92 @@ a loop.
 
 ---
 
+## 14. Automated nightly deployment (EventBridge Scheduler)
+
+CI pushes a fresh `:latest` to ECR on every `master` merge (§3, `.github/workflows/ci.yml`), but
+pushing an image does **not** restart the running task — the service keeps serving the old image
+until something forces a new deployment. An **EventBridge Scheduler** schedule does that on a fixed
+cadence: once a night it calls ECS `UpdateService` with `forceNewDeployment`, which starts a fresh
+task, re-pulls `:latest`, and — because the service owns the target group — swaps the new task's IP
+into `mind-games-tg` on its own. No Lambda, no pipeline: one scheduled API call.
+
+> **Why a service, not a bare task.** `forceNewDeployment` only exists on an ECS *service*. A
+> standalone `RunTask` has no roll-to-newest-image API, and nothing registers its ENI IP into the
+> ALB target group for you. Run the app as a service (§10) or none of this — including the automatic
+> ALB registration — works.
+
+**Prerequisite: stop-then-start deployment config.** A default roll (`minimumHealthyPercent=100`,
+`maximumPercent=200`) briefly runs two tasks, and two tasks both fire the `@Scheduled` board-pool
+refill and overshoot the pool (the single-instance rule from the top of this doc). Pin the service
+to one task at a time so a redeploy stops the old task before starting the new one:
+
+```bash
+aws ecs update-service --cluster $APP --service <service-name> \
+  --deployment-configuration 'minimumHealthyPercent=0,maximumPercent=100'
+```
+
+The cost is a short 503 window each deploy while there is no healthy target — the gap the
+"Zero-downtime deploys" follow-up below says to accept until the scheduler-scaling problem is fixed.
+
+**IAM role (create it first).** The scheduler assumes a role to make the call. For a *universal*
+target (any AWS API) the console's "Create new role for this schedule" is **disabled** — that only
+works for templated targets — so create the role up front:
+
+```bash
+# Trust: only EventBridge Scheduler in this account may assume it.
+aws iam create-role --role-name $APP-nightly-deploy \
+  --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"scheduler.amazonaws.com"},"Action":"sts:AssumeRole","Condition":{"StringEquals":{"aws:SourceAccount":"'$ACCOUNT_ID'"}}}]}'
+
+# Permission: one action, one service. forceNewDeployment reuses the current task
+# definition, so no iam:PassRole is needed.
+aws iam put-role-policy --role-name $APP-nightly-deploy --policy-name update-service \
+  --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"ecs:UpdateService","Resource":"arn:aws:ecs:'$AWS_REGION':'$ACCOUNT_ID':service/'$APP'/<service-name>"}]}'
+```
+
+**The schedule.** Fires daily at 20:00 `America/Los_Angeles`. Naming the timezone (rather than baking
+a UTC offset into the cron) makes it ride DST automatically, so it stays 8 PM Pacific year-round:
+
+```bash
+aws scheduler create-schedule --name $APP-nightly-deploy \
+  --schedule-expression 'cron(0 20 * * ? *)' \
+  --schedule-expression-timezone 'America/Los_Angeles' \
+  --flexible-time-window '{"Mode":"OFF"}' \
+  --target '{
+    "Arn": "arn:aws:scheduler:::aws-sdk:ecs:updateService",
+    "RoleArn": "arn:aws:iam::'$ACCOUNT_ID':role/'$APP'-nightly-deploy",
+    "Input": "{\"Cluster\":\"'$APP'\",\"Service\":\"<service-name>\",\"ForceNewDeployment\":true}"
+  }'
+```
+
+The universal-target `Input` uses the AWS SDK's PascalCase shape (`Cluster`/`Service`/
+`ForceNewDeployment`), **not** the lowercase JSON-API field names.
+
+> **The current deployment.** The live service is named **`mind-games-backend-service`** (the ECS
+> console's default when the service is created from the task-def family), not `mind-games` —
+> substitute it for `<service-name>` above and in the role's resource ARN.
+
+**Caveats.**
+
+- It redeploys **every night regardless of whether the image changed**, so a quiet day still takes
+  the 503 gap for nothing. A digest-gated variant — compare `:latest`'s digest to the running task's
+  and deploy only on a diff — needs a Lambda target instead of the direct API call.
+- It deploys whatever `:latest` points to at fire time, i.e. the last `master` push. It has no notion
+  of a pinned or manually approved build.
+
+**Verify without waiting for 8 PM.** Scheduler has no run-now. Temporarily set the cron a couple of
+minutes ahead (same timezone), watch for a new deployment and a `registered N targets` line in the
+service's **Events** tab, then restore `cron(0 20 * * ? *)`. A non-zero `TargetErrorCount` under
+**CloudWatch → AWS/Scheduler** points at a role trust/permission problem rather than a deploy failure.
+
+---
+
 ## Follow-ups / not covered here
 
 - **Horizontal scaling** requires fixing the single-instance scheduler assumption first (ShedLock or
   a separate worker service). Until then keep `desired-count 1`.
 - **Zero-downtime deploys**: with one task there's a brief gap on redeploy; ECS rolling deploy with
   `minimumHealthyPercent=100`/`maximumPercent=200` needs 2 tasks, which reintroduces the scheduler
-  problem. Accept the gap, or solve scheduling first.
+  problem. Accept the gap, or solve scheduling first. The nightly auto-deploy (§14) takes the gap
+  deliberately, running `minimumHealthyPercent=0`/`maximumPercent=100`.
 - **RDS TLS verification** and API Gateway auth (a Lambda authorizer — the native JWT authorizer needs
   an OIDC/JWKS issuer, and this app signs its own HMAC tokens) are left as hardening steps.
