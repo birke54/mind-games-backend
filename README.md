@@ -125,8 +125,10 @@ docs/aws-deployment.md             deployment runbook
 
 `docs/aws-deployment.md` is the runbook: ECS Fargate behind an internal ALB and an API Gateway HTTP
 API, backed by RDS MySQL, with CloudFront in front. Pushing to `master` builds the image and pushes
-it to ECR (`.github/workflows/build-push-ecr.yml`); the task definition in `infra/ecs/` supplies the
-environment contract, with `DB_PASSWORD` and `JWT_SECRET` coming from Secrets Manager.
+it to ECR (`.github/workflows/ci.yml`); the task definition in `infra/ecs/` supplies the environment
+contract, with `DB_PASSWORD` and `JWT_SECRET` coming from Secrets Manager. A push doesn't restart the
+running task, so an EventBridge Scheduler job force-deploys the ECS service nightly at 8 PM Pacific —
+the newest `master` image goes live within a day, no manual step (runbook §14).
 
 Two things to know before touching the topology. The service runs as a **single task** on purpose:
 the board refill and token cleanup jobs are in-process `@Scheduled` jobs that assume one instance,
