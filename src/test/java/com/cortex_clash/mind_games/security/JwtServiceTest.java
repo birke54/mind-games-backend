@@ -34,7 +34,15 @@ class JwtServiceTest {
     @Test
     void rejectsTamperedToken() {
         String token = jwtService.issueToken(new User("bob", "bob@example.com", "hash"));
-        String tampered = token.substring(0, token.length() - 1) + (token.endsWith("a") ? "b" : "a");
+
+        // Tamper with the *first* character of the signature, not the last. A 32-byte HMAC encodes
+        // to 43 base64url characters, of which the last carries only 4 significant bits — so
+        // several different final characters decode to the very same signature, and swapping one
+        // for another leaves a token that still verifies. Doing that made this test pass only
+        // about 93% of the time. Every bit of the first character is significant.
+        String[] parts = token.split("\\.");
+        parts[2] = (parts[2].charAt(0) == 'a' ? 'b' : 'a') + parts[2].substring(1);
+        String tampered = String.join(".", parts);
 
         assertThrows(JwtException.class, () -> jwtService.parse(tampered));
     }
