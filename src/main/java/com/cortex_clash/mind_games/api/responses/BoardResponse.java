@@ -22,13 +22,22 @@ import java.util.Map;
  * {@code "completed"} the UI should stop accepting input and stop sending saves — a board also
  * comes back {@code "completed"} from the resume list, which is what freezes it on reload.
  *
+ * <p><strong>{@code solution} is withheld on match boards.</strong> Solo play gets the solution so
+ * validation and hints can run on the client — cheating there only cheats yourself. In a race it
+ * would let either player fill the grid from a value sitting in their own browser, so a match board
+ * sends {@code null} until its player has completed it. The frontend must therefore treat
+ * {@code solution} as optional: no live conflict marking in a match, and hints go to the server.
+ * This applies to every path that serves a board, the resume list included.
+ *
  * @param id             the board's id, used to save progress against it
  * @param difficulty     {@code "easy"}, {@code "moderate"}, or {@code "hard"}
  * @param status         {@code "in_progress"} or {@code "completed"}; server-derived, never
  *                       accepted from the client
  * @param puzzle         the starting state as dealt
  * @param currentState   the player's board right now; equal to {@code puzzle} on a fresh board
- * @param solution       the completed state
+ * @param solution       the completed state, or {@code null} on a match board that is still in
+ *                       progress — see the class note on withholding
+ * @param matchId        the match this board is being raced in, or {@code null} for solo play
  * @param notes          pencil marks keyed by row-major cell index; cells with no notes are absent
  * @param elapsedSeconds total time the player has spent on this board
  * @param claimedAt      when the board was dealt
@@ -42,13 +51,18 @@ public record BoardResponse(
         String puzzle,
         String currentState,
         String solution,
+        Long matchId,
         Map<String, List<Integer>> notes,
         long elapsedSeconds,
         Instant claimedAt,
         Instant completedAt,
         Instant lastModifiedAt) {
 
-    /** Projects a persisted board onto the wire format. */
+    /**
+     * Projects a persisted board onto the wire format, dropping the solution if the board is not
+     * entitled to send it. This is the only constructor callers should use: building the record
+     * directly bypasses the check and is how a match board would leak its solution.
+     */
     public static BoardResponse from(UserBoard board) {
         return new BoardResponse(
                 board.getId(),
@@ -56,7 +70,8 @@ public record BoardResponse(
                 board.getStatus().dbValue(),
                 board.getPuzzleState(),
                 board.getCurrentState(),
-                board.getSolutionState(),
+                board.revealsSolution() ? board.getSolutionState() : null,
+                board.getMatchId(),
                 board.getNotes(),
                 board.getElapsedSeconds(),
                 board.getClaimedAt(),
