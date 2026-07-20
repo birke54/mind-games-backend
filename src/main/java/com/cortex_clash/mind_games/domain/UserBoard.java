@@ -156,6 +156,49 @@ public class UserBoard {
         }
     }
 
+    /**
+     * Whether a hint could fill this cell: it is not a given, and the player has not already put
+     * something there.
+     */
+    private boolean isHintable(int index) {
+        return puzzleState.charAt(index) == '0' && currentState.charAt(index) == '0';
+    }
+
+    /**
+     * Picks the cell a hint should fill. Honours the player's selection when it can, and otherwise
+     * falls back to the first empty cell — a hint that quietly did nothing because the wrong cell
+     * was selected is worse than one that lands somewhere else.
+     *
+     * @param preferred the cell the player had selected, or {@code null} if none
+     * @return the cell to reveal, or {@code -1} if the grid has no empty cell left
+     */
+    public int chooseHintCell(Integer preferred) {
+        if (preferred != null && preferred >= 0 && preferred < currentState.length()
+                && isHintable(preferred)) {
+            return preferred;
+        }
+        for (int i = 0; i < currentState.length(); i++) {
+            if (isHintable(i)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Fills one cell with its solved digit. Routed through {@link #saveProgress} so a hint that
+     * happens to fill the last cell completes the board on exactly the same terms as a player
+     * typing it would.
+     *
+     * @param index the cell to reveal
+     * @throws IllegalStateException if the board is already completed
+     */
+    public void revealCell(int index) {
+        StringBuilder revealed = new StringBuilder(currentState);
+        revealed.setCharAt(index, solutionState.charAt(index));
+        saveProgress(revealed.toString(), notes, elapsedSeconds);
+    }
+
     /** Whether the board is finished — and therefore frozen. */
     public boolean isCompleted() {
         return status == BoardStatus.COMPLETED;

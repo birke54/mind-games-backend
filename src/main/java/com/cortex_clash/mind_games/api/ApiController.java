@@ -10,6 +10,7 @@ import com.cortex_clash.mind_games.api.requests.AuthenticateUser;
 import com.cortex_clash.mind_games.api.requests.RegisterUserRequest;
 import com.cortex_clash.mind_games.api.requests.RequestPasswordReset;
 import com.cortex_clash.mind_games.api.requests.ResetPassword;
+import com.cortex_clash.mind_games.api.requests.RevealHint;
 import com.cortex_clash.mind_games.api.requests.SaveBoardProgress;
 import com.cortex_clash.mind_games.api.responses.BoardResponse;
 import com.cortex_clash.mind_games.auth.AuthService;
@@ -315,6 +316,38 @@ public class ApiController {
                             request.currentState(),
                             request.notes(),
                             request.elapsedSeconds())
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Board not found"));
+        } catch (BoardCompletedException e) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
+        }
+
+        return BoardResponse.from(board);
+    }
+
+    /**
+     * Reveals one cell of the caller's board, filling it with its solved digit.
+     *
+     * <p>The reveal is an ordinary save: it can complete the board, and a completed board is
+     * terminal here exactly as it is for a normal save.
+     *
+     * @param boardId   the board to reveal a cell on
+     * @param request   the selected cell, or a null {@code cellIndex} to take the first empty one
+     * @param principal the authenticated user
+     * @return the board after the reveal
+     * @throws ResponseStatusException with status 404 (NOT_FOUND) if the caller has no board with
+     *                                 that id
+     * @throws ResponseStatusException with status 409 (CONFLICT) if the board is already completed
+     */
+    @PostMapping("/v1/boards/{boardId}/hint")
+    public BoardResponse hint(@PathVariable Long boardId,
+                              @Valid @RequestBody(required = false) RevealHint request,
+                              Principal principal) {
+        UserBoard board;
+        try {
+            board = boardService.revealHint(
+                            boardId,
+                            principal.getName(),
+                            request == null ? null : request.cellIndex())
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Board not found"));
         } catch (BoardCompletedException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
