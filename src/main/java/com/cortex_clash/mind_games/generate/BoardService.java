@@ -4,6 +4,7 @@ import com.cortex_clash.mind_games.auth.UserRepository;
 import com.cortex_clash.mind_games.domain.GeneratedBoard;
 import com.cortex_clash.mind_games.domain.User;
 import com.cortex_clash.mind_games.domain.UserBoard;
+import com.cortex_clash.mind_games.multiplayer.MatchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -32,13 +33,16 @@ public class BoardService {
     private final GeneratedBoardRepository generatedBoardRepository;
     private final UserBoardRepository userBoardRepository;
     private final UserRepository userRepository;
+    private final MatchService matchService;
 
     public BoardService(GeneratedBoardRepository generatedBoardRepository,
                         UserBoardRepository userBoardRepository,
-                        UserRepository userRepository) {
+                        UserRepository userRepository,
+                        MatchService matchService) {
         this.generatedBoardRepository = generatedBoardRepository;
         this.userBoardRepository = userBoardRepository;
         this.userRepository = userRepository;
+        this.matchService = matchService;
     }
 
     /**
@@ -105,6 +109,9 @@ public class BoardService {
 
             board.saveProgress(currentState, notes, elapsedSeconds);
             UserBoard saved = userBoardRepository.save(board);
+            // A match board's progress and result are projections of the save the player just made,
+            // so they ride this path rather than a separate endpoint the client could skip or lie to.
+            matchService.recordBoardSaved(saved);
             if (saved.isCompleted()) {
                 log.info("User {} completed {} board {} in {}s",
                         username, saved.getDifficulty(), boardId, saved.getElapsedSeconds());
@@ -116,9 +123,13 @@ public class BoardService {
     /**
      * Reveals one cell of a player's board, filling it with its solved digit.
      *
-     * <p>The reveal is a save like any other: it goes through the same row lock, and it can complete
-     * the board on the same terms as the player typing the digit themselves. Nothing here lets a
-     * hint bypass the completion rules.
+     * <p>This exists for match boards. Solo play does hints on the client, which is free and works
+     * offline — but a match board deliberately does not carry its solution to the browser, so the
+     * only place a hint can come from is here. Solo boards may use it too; it costs a round trip
+     * and changes nothing else.
+     *
+     * <p>The reveal is a save like any other: it can complete the board, and it updates the
+     * player's standing in a match. Nothing lets a hint bypass the completion rules.
      *
      * @param boardId   the board to reveal a cell on
      * @param username  the owning user, as carried by the bearer token
@@ -144,6 +155,7 @@ public class BoardService {
 
             board.revealCell(target);
             UserBoard saved = userBoardRepository.save(board);
+            matchService.recordBoardSaved(saved);
             log.info("Revealed cell {} on board {} for user {}", target, boardId, username);
             return saved;
         });

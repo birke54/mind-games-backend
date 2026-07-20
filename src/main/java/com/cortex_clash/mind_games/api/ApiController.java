@@ -7,12 +7,15 @@ import java.util.Locale;
 import java.util.Map;
 
 import com.cortex_clash.mind_games.api.requests.AuthenticateUser;
+import com.cortex_clash.mind_games.api.requests.CreateMatch;
+import com.cortex_clash.mind_games.api.requests.JoinMatch;
 import com.cortex_clash.mind_games.api.requests.RegisterUserRequest;
 import com.cortex_clash.mind_games.api.requests.RequestPasswordReset;
 import com.cortex_clash.mind_games.api.requests.ResetPassword;
 import com.cortex_clash.mind_games.api.requests.RevealHint;
 import com.cortex_clash.mind_games.api.requests.SaveBoardProgress;
 import com.cortex_clash.mind_games.api.responses.BoardResponse;
+import com.cortex_clash.mind_games.api.responses.MatchResponse;
 import com.cortex_clash.mind_games.auth.AuthService;
 import com.cortex_clash.mind_games.auth.InvalidPasswordException;
 import com.cortex_clash.mind_games.auth.InvalidResetTokenException;
@@ -24,6 +27,10 @@ import com.cortex_clash.mind_games.domain.UserBoard;
 import com.cortex_clash.mind_games.generate.BoardCompletedException;
 import com.cortex_clash.mind_games.generate.BoardDifficulty;
 import com.cortex_clash.mind_games.generate.BoardService;
+import com.cortex_clash.mind_games.multiplayer.MatchNotFoundException;
+import com.cortex_clash.mind_games.multiplayer.MatchService;
+import com.cortex_clash.mind_games.multiplayer.MatchSnapshot;
+import com.cortex_clash.mind_games.multiplayer.MatchUnavailableException;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,6 +64,7 @@ public class ApiController {
     private final RefreshTokenService refreshTokenService;
     private final PasswordResetService passwordResetService;
     private final BoardService boardService;
+    private final MatchService matchService;
 
     /** Secure flag on the refresh cookie; disable only for local HTTP development. */
     private final boolean cookieSecure;
@@ -64,12 +72,26 @@ public class ApiController {
     public ApiController(AuthService authService, RefreshTokenService refreshTokenService,
                          PasswordResetService passwordResetService,
                          BoardService boardService,
+                         MatchService matchService,
                          @Value("${app.security.cookie-secure:true}") boolean cookieSecure) {
         this.authService = authService;
         this.refreshTokenService = refreshTokenService;
         this.passwordResetService = passwordResetService;
         this.boardService = boardService;
+        this.matchService = matchService;
         this.cookieSecure = cookieSecure;
+    }
+
+    /** A match that does not exist, or that the caller is not playing in. */
+    @ExceptionHandler(MatchNotFoundException.class)
+    public ResponseEntity<Map<String, String>> handleMatchNotFound(MatchNotFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Match not found"));
+    }
+
+    /** A match that exists but cannot be joined or acted on in its current state. */
+    @ExceptionHandler(MatchUnavailableException.class)
+    public ResponseEntity<Map<String, String>> handleMatchUnavailable(MatchUnavailableException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
     }
 
     /**
@@ -256,13 +278,7 @@ public class ApiController {
      */
     @GetMapping("/v1/board")
     public BoardResponse board(@RequestParam("difficulty") String difficulty, Principal principal) {
-        BoardDifficulty target;
-        try {
-            target = BoardDifficulty.fromDbValue(difficulty.toLowerCase(Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "difficulty must be one of: easy, moderate, hard");
-        }
+        BoardDifficulty target = parseDifficulty(difficulty);
 
         UserBoard board = boardService.claimBoard(principal.getName(), target)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
@@ -327,8 +343,9 @@ public class ApiController {
     /**
      * Reveals one cell of the caller's board, filling it with its solved digit.
      *
-     * <p>The reveal is an ordinary save: it can complete the board, and a completed board is
-     * terminal here exactly as it is for a normal save.
+     * <p>Needed because a match board's solution never reaches the client, so a hint there cannot be
+     * computed locally the way solo play does it. The reveal is an ordinary save: it can complete
+     * the board, and it moves the player's standing in a race.
      *
      * @param boardId   the board to reveal a cell on
      * @param request   the selected cell, or a null {@code cellIndex} to take the first empty one
@@ -354,6 +371,96 @@ public class ApiController {
         }
 
         return BoardResponse.from(board);
+    }
+
+    /**
+     * Concedes a match. Giving up a race that has started hands the win to the opponent; closing a
+     * lobby nobody joined simply ends it.
+     *
+     * @param matchId   the match to concede
+     * @param principal the authenticated user
+     * @return the match as it now stands
+     * @throws ResponseStatusException with status 404 (NOT_FOUND) if there is no such match or the
+     *                                 caller is not one of its players
+     */
+    @PostMapping("/v1/matches/{matchId}/forfeit")
+    public MatchResponse forfeit(@PathVariable Long matchId, Principal principal) {
+        return MatchResponse.from(matchService.forfeit(matchId, principal.getName()));
+    }
+
+    /**
+     * Opens a two-player lobby and returns its join code. No board is dealt yet — the pool is only
+     * drawn on when someone actually joins.
+     *
+     * @param request   the difficulty both players will race on
+     * @param principal the authenticated user, who becomes the host
+     * @return the new match, {@code status: "waiting"}
+     * @throws ResponseStatusException with status 400 (BAD_REQUEST) if the difficulty is unrecognized
+     */
+    @PostMapping("/v1/matches")
+    public ResponseEntity<MatchResponse> createMatch(@Valid @RequestBody CreateMatch request,
+                                                     Principal principal) {
+        MatchSnapshot match = matchService.createMatch(principal.getName(), parseDifficulty(request.difficulty()));
+        return ResponseEntity
+                .created(URI.create("/api/v1/matches/" + match.match().getId()))
+                .body(MatchResponse.from(match));
+    }
+
+    /**
+     * Takes the second seat in a match and starts the race. Both players are dealt their own board
+     * from one pooled puzzle, so the ordinary save endpoints carry the game from here.
+     *
+     * <p>Redeeming a code for a match the caller is already in is a no-op that returns the match,
+     * so a refreshed lobby does not error.
+     *
+     * @param request   the host's join code
+     * @param principal the authenticated user
+     * @return the started match, {@code status: "active"} with a {@code boardId} to play
+     * @throws ResponseStatusException with status 404 (NOT_FOUND) if no match has that code
+     * @throws ResponseStatusException with status 409 (CONFLICT) if the lobby is full or the match
+     *                                 is already over
+     * @throws ResponseStatusException with status 503 (SERVICE_UNAVAILABLE) if the pool holds no
+     *                                 board at the match's difficulty; the match stays waiting, so
+     *                                 the join can be retried once the refill lands
+     */
+    @PostMapping("/v1/matches/join")
+    public MatchResponse joinMatch(@Valid @RequestBody JoinMatch request, Principal principal) {
+        MatchSnapshot match = matchService.joinMatch(principal.getName(), request.joinCode())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "No boards available to start the match; try again shortly"));
+        return MatchResponse.from(match);
+    }
+
+    /**
+     * Reads a match the caller is playing in. This is the endpoint the frontend polls: while
+     * waiting, to see the opponent arrive; while racing, to track their progress and learn who won.
+     *
+     * @param matchId   the match to read
+     * @param principal the authenticated user
+     * @return the match as that player may see it
+     * @throws ResponseStatusException with status 404 (NOT_FOUND) if there is no such match or the
+     *                                 caller is not one of its players — the two are deliberately
+     *                                 indistinguishable
+     */
+    @GetMapping("/v1/matches/{matchId}")
+    public MatchResponse match(@PathVariable Long matchId, Principal principal) {
+        return MatchResponse.from(matchService.getMatch(matchId, principal.getName()));
+    }
+
+    /**
+     * Resolves a difficulty string from the wire onto its enum.
+     *
+     * @param difficulty the raw value
+     * @return the matching difficulty
+     * @throws ResponseStatusException with status 400 (BAD_REQUEST) if it matches no tier
+     */
+    private static BoardDifficulty parseDifficulty(String difficulty) {
+        try {
+            return BoardDifficulty.fromDbValue(difficulty.toLowerCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "difficulty must be one of: easy, moderate, hard");
+        }
     }
 
     /**

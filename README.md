@@ -99,10 +99,28 @@ and the two password-reset endpoints. Everything else needs `Authorization: Bear
 | `GET /api/v1/boards` | The caller's boards, most recently played first. |
 | `PUT /api/v1/boards/{id}` | Save full state: grid, pencil marks, elapsed time. Completion is terminal (409 after). |
 | `POST /api/v1/boards/{id}/hint` | Fill one cell with its solved digit. Body optional: `{"cellIndex": 0-80}`, else the first empty cell. |
+| `POST /api/v1/matches` | Open a two-player lobby at a difficulty. Returns a join code; no board is dealt yet. |
+| `POST /api/v1/matches/join` | Redeem a join code to take the second seat and start the race. 503 if the pool is empty at that tier. |
+| `GET /api/v1/matches/{id}` | Poll a match you are playing in. 404 if it isn't yours — indistinguishable from not existing. |
+| `POST /api/v1/matches/{id}/forfeit` | Concede. Hands a started race to the opponent; closes an unjoined lobby with no winner. |
 
 Boards are 81-character row-major strings (`'0'` = empty, read left to right, top to bottom). Saves
 send the whole grid, not a delta; the server detects completion by comparing the saved grid to the
 solution.
+
+A match deals **one** pooled puzzle and copies it into a board per player, so the ordinary save
+endpoints carry the race unchanged — there is no separate progress endpoint. Two consequences the
+frontend has to handle: a match board's `solution` comes back `null` until that player completes it
+(so conflict marking has to be off and hints must go to `POST /boards/{id}/hint`), and the only
+thing you learn about your opponent is a `correctCells` count — never their grid, since a
+mostly-correct grid is a mostly-complete solution. Races are scored on the server's
+`startedAt`/`finishedAt`, not the client-accumulated `elapsedSeconds`.
+
+Once a match is no longer live, `GET /api/v1/matches/{id}` returns the puzzle's `solution` to
+**both** players. Withholding it is about protecting the race, so it is released when the race ends
+— otherwise the player who lost is stuck with a board frozen in progress and no way to see the
+answer. It hangs off the match rather than the board for exactly that reason: the losing board is
+still `in_progress` and will never reveal it on its own.
 
 Passwords must be at least 10 characters and at most 72 *bytes* — the ceiling is BCrypt's
 truncation point, counted in the unit BCrypt truncates in.
@@ -115,6 +133,7 @@ src/main/java/com/cortex_clash/mind_games/
   auth/       registration, login, refresh + reset tokens, password policy, cleanup jobs
   security/   JWT issue/verify, the bearer filter, CloudFront origin verification, filter chain
   generate/   Sudoku generation, grading, and the board pool
+  multiplayer/ two-player races: lobbies, join codes, scoring, the stale-match sweep
   domain/     JPA entities and enum converters
   mail/       reset-mail delivery (SMTP, or log for local development)
 src/main/resources/db/migration/   Flyway migrations

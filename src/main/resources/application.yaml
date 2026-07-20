@@ -110,6 +110,17 @@ app:
     reply-to: ${PASSWORD_RESET_REPLY_TO:support@cortexclash.org}
     # Cron for purging expired reset-token rows (Spring 6-field cron). Default: daily 03:30.
     cleanup-cron: ${PASSWORD_RESET_CLEANUP_CRON:0 30 3 * * *}
+  multiplayer:
+    # How long a lobby may advertise its join code before it is abandoned. A match has no other way
+    # to end than someone finishing, so without this an unjoined lobby lives forever and keeps its
+    # code reserved.
+    lobby-timeout-minutes: ${MATCH_LOBBY_TIMEOUT_MINUTES:15}
+    # How long a started race may run before it is presumed abandoned. Generous on purpose: a hard
+    # puzzle left overnight and picked up in the morning is normal play, not a dead match.
+    idle-timeout-minutes: ${MATCH_IDLE_TIMEOUT_MINUTES:1440}
+    # Cron for the stale-match sweep (Spring 6-field cron). Default: every five minutes, which is
+    # frequent enough that a lobby's stated timeout is roughly what a player experiences.
+    cleanup-cron: ${MATCH_CLEANUP_CRON:0 */5 * * * *}
   security:
     # Secure flag on the refresh cookie. Set to false for local development over plain HTTP,
     # otherwise the browser will not send the cookie back.
