@@ -98,6 +98,7 @@ and the two password-reset endpoints. Everything else needs `Authorization: Bear
 | `GET /api/v1/board?difficulty=easy\|moderate\|hard` | Deal a board. 503 if the pool is empty at that tier. |
 | `GET /api/v1/boards` | The caller's boards, most recently played first. |
 | `PUT /api/v1/boards/{id}` | Save full state: grid, pencil marks, elapsed time. Completion is terminal (409 after). |
+| `POST /api/v1/boards/{id}/hint` | Fill one cell with its solved digit. Body optional: `{"cellIndex": 0-80}`, else the first empty cell. |
 
 Boards are 81-character row-major strings (`'0'` = empty, read left to right, top to bottom). Saves
 send the whole grid, not a delta; the server detects completion by comparing the saved grid to the

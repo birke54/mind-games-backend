@@ -114,6 +114,42 @@ public class BoardService {
     }
 
     /**
+     * Reveals one cell of a player's board, filling it with its solved digit.
+     *
+     * <p>The reveal is a save like any other: it goes through the same row lock, and it can complete
+     * the board on the same terms as the player typing the digit themselves. Nothing here lets a
+     * hint bypass the completion rules.
+     *
+     * @param boardId   the board to reveal a cell on
+     * @param username  the owning user, as carried by the bearer token
+     * @param cellIndex the cell the player had selected, or {@code null} to take the first empty one
+     * @return the board after the reveal, or empty if the user has no board with that id
+     * @throws BoardCompletedException if the board is already completed
+     */
+    @Transactional
+    public Optional<UserBoard> revealHint(Long boardId, String username, Integer cellIndex) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown user: " + username));
+
+        return userBoardRepository.findLockedByIdAndUserId(boardId, user.getId()).map(board -> {
+            if (board.isCompleted()) {
+                throw new BoardCompletedException(boardId);
+            }
+
+            int target = board.chooseHintCell(cellIndex);
+            if (target < 0) {
+                // A full grid that is not yet complete: nothing to reveal, and not an error.
+                return board;
+            }
+
+            board.revealCell(target);
+            UserBoard saved = userBoardRepository.save(board);
+            log.info("Revealed cell {} on board {} for user {}", target, boardId, username);
+            return saved;
+        });
+    }
+
+    /**
      * Lists a user's boards, most recently played first.
      *
      * @param username the user, as carried by the bearer token
