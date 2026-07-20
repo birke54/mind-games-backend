@@ -5,6 +5,7 @@ import com.cortex_clash.mind_games.domain.BoardStatus;
 import com.cortex_clash.mind_games.domain.GeneratedBoard;
 import com.cortex_clash.mind_games.domain.User;
 import com.cortex_clash.mind_games.domain.UserBoard;
+import com.cortex_clash.mind_games.multiplayer.MatchService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -32,9 +33,10 @@ class BoardServiceTest {
     private final GeneratedBoardRepository generatedBoardRepository = mock(GeneratedBoardRepository.class);
     private final UserBoardRepository userBoardRepository = mock(UserBoardRepository.class);
     private final UserRepository userRepository = mock(UserRepository.class);
+    private final MatchService matchService = mock(MatchService.class);
 
     private final BoardService boardService =
-            new BoardService(generatedBoardRepository, userBoardRepository, userRepository);
+            new BoardService(generatedBoardRepository, userBoardRepository, userRepository, matchService);
 
     private final User user = mock(User.class);
 
