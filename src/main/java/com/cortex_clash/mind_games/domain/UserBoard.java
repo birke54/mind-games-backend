@@ -40,6 +40,17 @@ public class UserBoard {
     @Column(name = "user_id", nullable = false)
     private Integer userId;
 
+    /**
+     * The match this board was dealt for, or {@code null} for an ordinary solo board.
+     *
+     * <p>Load-bearing for more than bookkeeping: a board in a live match does not send its solution
+     * to the client (see {@link #revealsSolution()}). Solo play ships the solution so validation
+     * and hints can run locally, which is harmless when the only person you can cheat is yourself —
+     * in a race it would let either player win instantly from a value already in their browser.
+     */
+    @Column(name = "match_id", updatable = false)
+    private Long matchId;
+
     @Convert(converter = BoardDifficultyConverter.class)
     @Column(name = "difficulty_rating", nullable = false)
     private BoardDifficulty difficulty;
@@ -122,7 +133,23 @@ public class UserBoard {
      * @param solutionState the completed state, 81-char row-major
      */
     public UserBoard(Integer userId, BoardDifficulty difficulty, String puzzleState, String solutionState) {
+        this(userId, null, difficulty, puzzleState, solutionState);
+    }
+
+    /**
+     * Deals a board that belongs to a match. Identical to a solo board except that it withholds its
+     * solution from the client while the race is undecided.
+     *
+     * @param userId        the claiming user
+     * @param matchId       the match this board was dealt for, or {@code null} for solo play
+     * @param difficulty    the board's difficulty tier
+     * @param puzzleState   the starting state, 81-char row-major
+     * @param solutionState the completed state, 81-char row-major
+     */
+    public UserBoard(Integer userId, Long matchId, BoardDifficulty difficulty,
+                     String puzzleState, String solutionState) {
         this.userId = userId;
+        this.matchId = matchId;
         this.difficulty = difficulty;
         this.puzzleState = puzzleState;
         this.currentState = puzzleState;
@@ -204,12 +231,52 @@ public class UserBoard {
         return status == BoardStatus.COMPLETED;
     }
 
+    /** Whether this board is being played as one half of a match. */
+    public boolean isMatchBoard() {
+        return matchId != null;
+    }
+
+    /**
+     * Whether the solution may be sent to the client. Solo boards always may — local validation and
+     * hints depend on it. A match board may not, until its own player has completed it and has
+     * nothing left to gain from it.
+     *
+     * <p>A player who <em>loses</em> a race would therefore never see the solution from here, since
+     * their board stays in progress. Deciding otherwise needs the match's status, which this row
+     * does not carry — so that reveal belongs to the match endpoint rather than here. Keep this
+     * method about the board alone.
+     */
+    public boolean revealsSolution() {
+        return !isMatchBoard() || isCompleted();
+    }
+
+    /**
+     * Counts how many cells currently match the solution — the opponent-visible progress figure.
+     * Empty cells never count, so a fresh board scores only its givens.
+     *
+     * @return cells matching the solution, 0 to 81
+     */
+    public int countCorrectCells() {
+        int correct = 0;
+        for (int i = 0; i < currentState.length(); i++) {
+            char digit = currentState.charAt(i);
+            if (digit != '0' && digit == solutionState.charAt(i)) {
+                correct++;
+            }
+        }
+        return correct;
+    }
+
     public Long getId() {
         return id;
     }
 
     public Integer getUserId() {
         return userId;
+    }
+
+    public Long getMatchId() {
+        return matchId;
     }
 
     public BoardDifficulty getDifficulty() {

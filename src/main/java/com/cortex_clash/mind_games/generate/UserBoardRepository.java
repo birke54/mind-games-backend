@@ -34,6 +34,16 @@ public interface UserBoardRepository extends JpaRepository<UserBoard, Long> {
     Optional<UserBoard> findByIdAndUserId(Long id, Integer userId);
 
     /**
+     * Finds a player's board within a match. A match deals exactly one board per player, so
+     * {@code (matchId, userId)} identifies it without needing the board id.
+     *
+     * @param matchId the match
+     * @param userId  the player
+     * @return that player's board in that match, or empty if none was dealt
+     */
+    Optional<UserBoard> findByMatchIdAndUserId(Long matchId, Integer userId);
+
+    /**
      * The same lookup, but holding a write lock on the row until the caller's transaction commits.
      *
      * <p>Used by the save path, where completion is a terminal, one-way transition: without the
