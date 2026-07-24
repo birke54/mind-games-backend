@@ -2,6 +2,8 @@ package com.cortex_clash.mind_games.generate;
 
 import com.cortex_clash.mind_games.domain.UserBoard;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.stereotype.Repository;
@@ -16,12 +18,13 @@ import java.util.Optional;
 public interface UserBoardRepository extends JpaRepository<UserBoard, Long> {
 
     /**
-     * Lists a user's boards, most recently played first.
+     * Lists a user's boards, most recently played first, limited to 5 results.
      *
      * @param userId the owning user
-     * @return that user's boards, newest activity first
+     * @param pageable pagination information (use PageRequest.of(0, 5))
+     * @return that user's boards, newest activity first, limited to 5
      */
-    List<UserBoard> findByUserIdOrderByLastModifiedAtDesc(Integer userId);
+    Page<UserBoard> findByUserIdOrderByLastModifiedAtDesc(Integer userId, Pageable pageable);
 
     /**
      * Looks up one of a user's boards. Scoping the lookup by {@code userId} is what stops one user
