@@ -18,11 +18,11 @@ import java.util.Optional;
 public interface UserBoardRepository extends JpaRepository<UserBoard, Long> {
 
     /**
-     * Lists a user's boards, most recently played first, limited to 5 results.
+     * Lists a page of a user's boards, most recently played first.
      *
-     * @param userId the owning user
-     * @param pageable pagination information (use PageRequest.of(0, 5))
-     * @return that user's boards, newest activity first, limited to 5
+     * @param userId   the owning user
+     * @param pageable which slice of that ordering to return
+     * @return one page of that user's boards, newest activity first
      */
     Page<UserBoard> findByUserIdOrderByLastModifiedAtDesc(Integer userId, Pageable pageable);
 
