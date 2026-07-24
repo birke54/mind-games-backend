@@ -7,6 +7,8 @@ import com.cortex_clash.mind_games.domain.UserBoard;
 import com.cortex_clash.mind_games.multiplayer.MatchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +31,9 @@ import java.util.Optional;
 @Service
 public class BoardService {
     private static final Logger log = LoggerFactory.getLogger(BoardService.class);
+
+    /** How many of a player's boards {@link #listBoards} hands back. */
+    private static final int RECENT_BOARD_LIMIT = 5;
 
     private final GeneratedBoardRepository generatedBoardRepository;
     private final UserBoardRepository userBoardRepository;
@@ -162,15 +167,16 @@ public class BoardService {
     }
 
     /**
-     * Lists a user's boards, most recently played first.
+     * Lists a user's most recently played boards, newest activity first.
      *
      * @param username the user, as carried by the bearer token
-     * @return that user's boards, newest activity first
+     * @return that user's {@value #RECENT_BOARD_LIMIT} most recent boards, newest activity first
      */
     @Transactional(readOnly = true)
-    public List<UserBoard> listBoards(String username) {
+    public Page<UserBoard> listBoards(String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new IllegalArgumentException("Unknown user: " + username));
-        return userBoardRepository.findByUserIdOrderByLastModifiedAtDesc(user.getId());
+        return userBoardRepository.findByUserIdOrderByLastModifiedAtDesc(
+                user.getId(), Pageable.ofSize(RECENT_BOARD_LIMIT));
     }
 }
