@@ -122,8 +122,9 @@ Once a match is no longer live, `GET /api/v1/matches/{id}` returns the puzzle's 
 answer. It hangs off the match rather than the board for exactly that reason: the losing board is
 still `in_progress` and will never reveal it on its own.
 
-Passwords must be at least 10 characters and at most 72 *bytes* — the ceiling is BCrypt's
-truncation point, counted in the unit BCrypt truncates in.
+Passwords must be at least 8 characters and at most 30 *bytes*. Standard alphanumerics and basic
+symbols are one UTF-8 byte each, so for those passwords the ceiling is effectively 30 characters;
+accented characters and emoji encode to more than one byte and so hit it sooner.
 
 ## Layout
 

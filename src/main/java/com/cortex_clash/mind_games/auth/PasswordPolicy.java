@@ -25,17 +25,19 @@ public final class PasswordPolicy {
      * Minimum password length. Anything shorter is brute-forceable offline; {@code a} is currently
      * a valid password, which is what this exists to end.
      */
-    public static final int MIN_LENGTH = 10;
+    public static final int MIN_LENGTH = 8;
 
     /**
      * Maximum password length, in bytes of UTF-8.
      *
-     * <p>This is not an arbitrary cap: BCrypt <em>silently truncates</em> its input at 72 bytes.
-     * Accepting a longer password would mean quietly ignoring everything past the 72nd byte, so a
-     * user who believes they set a 100-character passphrase would in fact be protected by its first
-     * 72 bytes. Better to reject it than to lie about it.
+     * <p>Set to 30 bytes because the alphanumerics and basic symbols that make up a standard
+     * password are one byte each in UTF-8, so for those passwords this is effectively a
+     * 30-character limit.
+     *
+     * <p>TODO: reject passwords containing accented characters or emoji, which encode to more than
+     * one byte and so hit this ceiling well short of 30 characters.
      */
-    public static final int MAX_LENGTH_BYTES = 72;
+    public static final int MAX_LENGTH_BYTES = 30;
 
     private PasswordPolicy(UserRepository userRepository, PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
@@ -69,8 +71,8 @@ public final class PasswordPolicy {
             throw new InvalidPasswordException(
                     "Password must be at least " + MIN_LENGTH + " characters");
         }
-        // Counted in bytes, not characters, because that is the unit BCrypt truncates in: a
-        // 40-character password of emoji is over the limit.
+        // Counted in bytes, not characters: a password of accented characters or emoji encodes to
+        // more than one byte each, so it hits the ceiling well short of 30 characters.
         if (password.getBytes(StandardCharsets.UTF_8).length > MAX_LENGTH_BYTES) {
             throw new InvalidPasswordException(
                     "Password must be at most " + MAX_LENGTH_BYTES + " bytes");

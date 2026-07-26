@@ -115,7 +115,7 @@ public class ApiController {
      * @throws ResponseStatusException with status 500 (INTERNAL_SERVER_ERROR) on unexpected errors
      */
     @PostMapping("/v1/register")
-    public ResponseEntity<Map<String, Object>> registerUser(@RequestBody RegisterUserRequest request) {
+    public ResponseEntity<Map<String, Object>> registerUser(@Valid @RequestBody RegisterUserRequest request) {
         User user;
         try {
             user = authService.registerUser(request.username(), request.email(), request.password());
