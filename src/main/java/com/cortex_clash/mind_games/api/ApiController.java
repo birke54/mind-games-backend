@@ -288,11 +288,12 @@ public class ApiController {
     }
 
     /**
-     * Lists the caller's boards, most recently played first, so the frontend can offer to resume
-     * one. Each carries its full state, including the solution.
+     * Lists the caller's unfinished boards, most recently played first, so the frontend can offer
+     * to resume one. Each carries its full state, including the solution. Completed boards are not
+     * listed here — the save that finished one is the last the frontend hears of it.
      *
      * @param principal the authenticated user
-     * @return the caller's boards, newest activity first
+     * @return the caller's in-progress boards, newest activity first
      */
     @GetMapping("/v1/boards")
     public List<BoardResponse> boards(Principal principal) {

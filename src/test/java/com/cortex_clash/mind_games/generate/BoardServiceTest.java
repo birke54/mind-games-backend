@@ -8,6 +8,8 @@ import com.cortex_clash.mind_games.domain.UserBoard;
 import com.cortex_clash.mind_games.multiplayer.MatchService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Map;
@@ -19,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -150,5 +153,32 @@ class BoardServiceTest {
 
         assertTrue(boardService.saveProgress(99L, USERNAME, PUZZLE, Map.of(), 0).isEmpty());
         verify(userBoardRepository, never()).save(any(UserBoard.class));
+    }
+
+    /**
+     * Pins the arguments only. That the database really filters and really caps is
+     * {@link UserBoardRepositoryTest}'s job — a mocked repository would return whatever it is
+     * stubbed with even if the query were derived from the wrong property.
+     */
+    @Test
+    void listingAsksForTheUsersInProgressBoardsFiveAtATime() {
+        givenUserExists();
+        when(userBoardRepository.findByStatusAndUserIdOrderByLastModifiedAtDesc(any(), any(), any()))
+                .thenReturn(Page.empty());
+
+        boardService.listBoards(USERNAME);
+
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        verify(userBoardRepository).findByStatusAndUserIdOrderByLastModifiedAtDesc(
+                eq(BoardStatus.IN_PROGRESS), eq(7), pageable.capture());
+        assertEquals(5, pageable.getValue().getPageSize(),
+                "the resume list is capped at RECENT_BOARD_LIMIT");
+    }
+
+    @Test
+    void listingBoardsForAnUnknownUserFails() {
+        when(userRepository.findByUsername(USERNAME)).thenReturn(Optional.empty());
+
+        assertThrows(IllegalArgumentException.class, () -> boardService.listBoards(USERNAME));
     }
 }

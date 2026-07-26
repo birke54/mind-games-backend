@@ -13,7 +13,7 @@ import org.testcontainers.utility.DockerImageName;
  * embedded stand-in.
  */
 @TestConfiguration(proxyBeanMethods = false)
-class TestcontainersConfiguration {
+public class TestcontainersConfiguration {
 
     @Bean
     @ServiceConnection

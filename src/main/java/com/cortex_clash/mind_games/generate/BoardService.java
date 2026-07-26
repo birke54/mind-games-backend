@@ -1,6 +1,7 @@
 package com.cortex_clash.mind_games.generate;
 
 import com.cortex_clash.mind_games.auth.UserRepository;
+import com.cortex_clash.mind_games.domain.BoardStatus;
 import com.cortex_clash.mind_games.domain.GeneratedBoard;
 import com.cortex_clash.mind_games.domain.User;
 import com.cortex_clash.mind_games.domain.UserBoard;
@@ -32,7 +33,7 @@ import java.util.Optional;
 public class BoardService {
     private static final Logger log = LoggerFactory.getLogger(BoardService.class);
 
-    /** How many of a player's boards {@link #listBoards} hands back. */
+    /** How many of a player's in-progress boards {@link #listBoards} hands back. */
     private static final int RECENT_BOARD_LIMIT = 5;
 
     private final GeneratedBoardRepository generatedBoardRepository;
@@ -167,16 +168,19 @@ public class BoardService {
     }
 
     /**
-     * Lists a user's most recently played boards, newest activity first.
+     * Lists a user's most recently played unfinished boards, newest activity first. Completed
+     * boards are left out: this list exists so the frontend can offer to resume something, and a
+     * finished board has nothing to resume.
      *
      * @param username the user, as carried by the bearer token
-     * @return that user's {@value #RECENT_BOARD_LIMIT} most recent boards, newest activity first
+     * @return that user's {@value #RECENT_BOARD_LIMIT} most recent in-progress boards, newest
+     * activity first
      */
     @Transactional(readOnly = true)
     public Page<UserBoard> listBoards(String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new IllegalArgumentException("Unknown user: " + username));
-        return userBoardRepository.findByUserIdOrderByLastModifiedAtDesc(
-                user.getId(), Pageable.ofSize(RECENT_BOARD_LIMIT));
+        return userBoardRepository.findByStatusAndUserIdOrderByLastModifiedAtDesc(
+                BoardStatus.IN_PROGRESS, user.getId(), Pageable.ofSize(RECENT_BOARD_LIMIT));
     }
 }
