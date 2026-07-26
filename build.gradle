@@ -41,6 +41,10 @@ dependencies {
 	implementation 'org.flywaydb:flyway-mysql'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	// Same Boot 4 split as spring-boot-flyway above, applied to the test slices: @DataJpaTest and
+	// TestEntityManager are no longer in spring-boot-test-autoconfigure and ship in their own
+	// modules.
+	testImplementation 'org.springframework.boot:spring-boot-data-jpa-test'
 	// Spin a throwaway MySQL for the full-context smoke test, so Flyway runs the real MySQL
 	// migrations and Hibernate validates against them — an embedded DB can't do either faithfully.
 	testImplementation 'org.springframework.boot:spring-boot-testcontainers'

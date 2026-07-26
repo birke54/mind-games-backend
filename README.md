@@ -96,7 +96,7 @@ and the two password-reset endpoints. Everything else needs `Authorization: Bear
 | `POST /api/v1/request_password_reset` | Email a reset link. Always 202, whatever the address. |
 | `POST /api/v1/reset_password` | Redeem the token, set a new password, revoke every session. |
 | `GET /api/v1/board?difficulty=easy\|moderate\|hard` | Deal a board. 503 if the pool is empty at that tier. |
-| `GET /api/v1/boards` | The caller's boards, most recently played first. |
+| `GET /api/v1/boards` | The caller's 5 most recent **unfinished** boards, most recently played first. Completed boards are not listed. |
 | `PUT /api/v1/boards/{id}` | Save full state: grid, pencil marks, elapsed time. Completion is terminal (409 after). |
 | `POST /api/v1/boards/{id}/hint` | Fill one cell with its solved digit. Body optional: `{"cellIndex": 0-80}`, else the first empty cell. |
 | `POST /api/v1/matches` | Open a two-player lobby at a difficulty. Returns a join code; no board is dealt yet. |

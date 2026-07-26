@@ -1,5 +1,6 @@
 package com.cortex_clash.mind_games.generate;
 
+import com.cortex_clash.mind_games.domain.BoardStatus;
 import com.cortex_clash.mind_games.domain.UserBoard;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
@@ -18,13 +19,16 @@ import java.util.Optional;
 public interface UserBoardRepository extends JpaRepository<UserBoard, Long> {
 
     /**
-     * Lists a page of a user's boards, most recently played first.
+     * Lists a page of a user's boards in one status, most recently played first. The page limit
+     * applies after the status filter, so a player with a long tail of finished puzzles still gets
+     * a full page of the ones they can resume.
      *
+     * @param status   the status to list
      * @param userId   the owning user
      * @param pageable which slice of that ordering to return
-     * @return one page of that user's boards, newest activity first
+     * @return one page of that user's boards in that status, newest activity first
      */
-    Page<UserBoard> findByUserIdOrderByLastModifiedAtDesc(Integer userId, Pageable pageable);
+    Page<UserBoard> findByStatusAndUserIdOrderByLastModifiedAtDesc(BoardStatus status, Integer userId, Pageable pageable);
 
     /**
      * Looks up one of a user's boards. Scoping the lookup by {@code userId} is what stops one user
