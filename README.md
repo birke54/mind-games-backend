@@ -99,6 +99,7 @@ and the two password-reset endpoints. Everything else needs `Authorization: Bear
 | `GET /api/v1/boards` | The caller's 5 most recent **unfinished** boards, most recently played first. Completed boards are not listed. |
 | `PUT /api/v1/boards/{id}` | Save full state: grid, pencil marks, elapsed time. Completion is terminal (409 after). |
 | `POST /api/v1/boards/{id}/hint` | Fill one cell with its solved digit. Body optional: `{"cellIndex": 0-80}`, else the first empty cell. |
+| `GET /api/v1/board/stats` | The caller's lifetime totals — boards solved, best time, time played — overall and per difficulty. Every tier appears; one never played reports zeroes. |
 | `POST /api/v1/matches` | Open a two-player lobby at a difficulty. Returns a join code; no board is dealt yet. |
 | `POST /api/v1/matches/join` | Redeem a join code to take the second seat and start the race. 503 if the pool is empty at that tier. |
 | `GET /api/v1/matches/{id}` | Poll a match you are playing in. 404 if it isn't yours — indistinguishable from not existing. |

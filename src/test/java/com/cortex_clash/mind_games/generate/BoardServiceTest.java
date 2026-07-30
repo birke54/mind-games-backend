@@ -1,5 +1,6 @@
 package com.cortex_clash.mind_games.generate;
 
+import com.cortex_clash.mind_games.api.responses.BoardStatsResponse;
 import com.cortex_clash.mind_games.auth.UserRepository;
 import com.cortex_clash.mind_games.domain.BoardStatus;
 import com.cortex_clash.mind_games.domain.GeneratedBoard;
@@ -8,12 +9,11 @@ import com.cortex_clash.mind_games.domain.UserBoard;
 import com.cortex_clash.mind_games.multiplayer.MatchService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -21,7 +21,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -156,23 +155,21 @@ class BoardServiceTest {
     }
 
     /**
-     * Pins the arguments only. That the database really filters and really caps is
-     * {@link UserBoardRepositoryTest}'s job — a mocked repository would return whatever it is
-     * stubbed with even if the query were derived from the wrong property.
+     * Pins the query the service asks for — the status, the owning user, and the capped finder
+     * itself, since the limit of five now lives in the method name. That the database really
+     * filters, orders, and caps is {@link UserBoardRepositoryTest}'s job: a mocked repository would
+     * return whatever it is stubbed with even if the query were derived from the wrong property.
      */
     @Test
     void listingAsksForTheUsersInProgressBoardsFiveAtATime() {
         givenUserExists();
-        when(userBoardRepository.findByStatusAndUserIdOrderByLastModifiedAtDesc(any(), any(), any()))
-                .thenReturn(Page.empty());
+        when(userBoardRepository.findFirst5ByStatusAndUserIdOrderByLastModifiedAtDesc(any(), any()))
+                .thenReturn(List.of());
 
         boardService.listBoards(USERNAME);
 
-        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
-        verify(userBoardRepository).findByStatusAndUserIdOrderByLastModifiedAtDesc(
-                eq(BoardStatus.IN_PROGRESS), eq(7), pageable.capture());
-        assertEquals(5, pageable.getValue().getPageSize(),
-                "the resume list is capped at RECENT_BOARD_LIMIT");
+        verify(userBoardRepository).findFirst5ByStatusAndUserIdOrderByLastModifiedAtDesc(
+                BoardStatus.IN_PROGRESS, 7);
     }
 
     @Test
@@ -180,5 +177,99 @@ class BoardServiceTest {
         when(userRepository.findByUsername(USERNAME)).thenReturn(Optional.empty());
 
         assertThrows(IllegalArgumentException.class, () -> boardService.listBoards(USERNAME));
+    }
+
+    /**
+     * Covers the folding only. That the aggregate itself counts, filters, and yields a null best
+     * time for an unfinished tier is {@link UserBoardRepositoryTest}'s job.
+     */
+    @Test
+    void statsSumTheTiersAndTakeTheBestTimeAcrossAllOfThem() {
+        givenUserExists();
+        givenAggregate(
+                tier(BoardDifficulty.EASY, 3, 1, 90L, 600, 750),
+                tier(BoardDifficulty.HARD, 2, 0, 45L, 500, 500));
+
+        BoardStatsResponse stats = boardService.retrieveStats(USERNAME);
+
+        assertEquals(5, stats.boardsSolved());
+        assertEquals(1250, stats.totalPlayTime(),
+                "the overall total is each tier's total, so the time on the unfinished easy board "
+                        + "is in it too");
+        assertEquals(Long.valueOf(45), stats.bestCompletedTime(),
+                "the overall best is the fastest of any tier, not of the first or last one seen");
+
+        assertEquals(List.of("easy", "moderate", "hard"), List.copyOf(stats.statsByDifficulty().keySet()),
+                "every tier is keyed by its lowercase database name, easiest first, even the one "
+                        + "the aggregate had no row for");
+        BoardStatsResponse.DifficultyBreakdown easy = stats.statsByDifficulty().get("easy");
+        assertEquals(3, easy.boardsSolved());
+        assertEquals(1, easy.boardsInProgress());
+        assertEquals(Long.valueOf(90), easy.bestTime());
+        assertEquals(600, easy.solvedPlayTime(),
+                "solved-board time is reported apart from the tier's total, since it is what the "
+                        + "frontend divides into a mean solve time");
+        assertEquals(750, easy.totalPlayTime(), "the tier's total counts the unfinished board too");
+        assertEquals(new BoardStatsResponse.DifficultyBreakdown(0, 0, null, 0, 0),
+                stats.statsByDifficulty().get("moderate"),
+                "an unplayed tier is a zero row, and it adds nothing to the totals");
+    }
+
+    @Test
+    void aTierWithNothingFinishedStillCountsTowardsTheTotalsWithoutClaimingTheBestTime() {
+        givenUserExists();
+        givenAggregate(
+                tier(BoardDifficulty.EASY, 1, 0, 120L, 120, 120),
+                tier(BoardDifficulty.HARD, 0, 2, null, 0, 800));
+
+        BoardStatsResponse stats = boardService.retrieveStats(USERNAME);
+
+        assertEquals(1, stats.boardsSolved());
+        assertEquals(920, stats.totalPlayTime(), "the unfinished tier's time still counts as played");
+        assertEquals(Long.valueOf(120), stats.bestCompletedTime(),
+                "a tier with no completion must not drag the overall best down");
+        assertNull(stats.statsByDifficulty().get("hard").bestTime(),
+                "and it reports no best time of its own");
+    }
+
+    @Test
+    void statsForAPlayerWhoHasNeverBeenDealtABoardAreZeroesAcrossEveryTier() {
+        givenUserExists();
+        givenAggregate();
+
+        BoardStatsResponse stats = boardService.retrieveStats(USERNAME);
+
+        assertEquals(0, stats.boardsSolved());
+        assertEquals(0, stats.totalPlayTime());
+        assertNull(stats.bestCompletedTime(), "never having finished a board is null, not zero");
+        assertEquals(Set.of("easy", "moderate", "hard"), stats.statsByDifficulty().keySet(),
+                "an empty aggregate still reports every tier, so the frontend never has to guess");
+        assertTrue(stats.statsByDifficulty().values().stream()
+                        .allMatch(tier -> tier.equals(new BoardStatsResponse.DifficultyBreakdown(0, 0, null, 0, 0))),
+                "and each one is zeroes with no best time");
+    }
+
+    @Test
+    void statsForAnUnknownUserFail() {
+        when(userRepository.findByUsername(USERNAME)).thenReturn(Optional.empty());
+
+        assertThrows(IllegalArgumentException.class, () -> boardService.retrieveStats(USERNAME));
+    }
+
+    private void givenAggregate(DifficultyStats... tiers) {
+        when(userBoardRepository.aggregateByDifficulty(
+                7, BoardStatus.COMPLETED, BoardStatus.IN_PROGRESS)).thenReturn(List.of(tiers));
+    }
+
+    private static DifficultyStats tier(BoardDifficulty difficulty, long solved, long inProgress,
+                                        Long bestTime, long solvedPlayTime, long totalPlayTime) {
+        DifficultyStats stats = mock(DifficultyStats.class);
+        when(stats.getDifficulty()).thenReturn(difficulty);
+        when(stats.getBoardsSolved()).thenReturn(solved);
+        when(stats.getBoardsInProgress()).thenReturn(inProgress);
+        when(stats.getBestTime()).thenReturn(bestTime);
+        when(stats.getSolvedPlayTime()).thenReturn(solvedPlayTime);
+        when(stats.getTotalPlayTime()).thenReturn(totalPlayTime);
+        return stats;
     }
 }

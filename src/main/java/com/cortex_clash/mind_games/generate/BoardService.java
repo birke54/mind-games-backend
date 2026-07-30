@@ -1,5 +1,6 @@
 package com.cortex_clash.mind_games.generate;
 
+import com.cortex_clash.mind_games.api.responses.BoardStatsResponse;
 import com.cortex_clash.mind_games.auth.UserRepository;
 import com.cortex_clash.mind_games.domain.BoardStatus;
 import com.cortex_clash.mind_games.domain.GeneratedBoard;
@@ -8,14 +9,15 @@ import com.cortex_clash.mind_games.domain.UserBoard;
 import com.cortex_clash.mind_games.multiplayer.MatchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Deals boards out of the {@code generated_boards} pool and keeps the resulting {@link UserBoard}
@@ -32,9 +34,6 @@ import java.util.Optional;
 @Service
 public class BoardService {
     private static final Logger log = LoggerFactory.getLogger(BoardService.class);
-
-    /** How many of a player's in-progress boards {@link #listBoards} hands back. */
-    private static final int RECENT_BOARD_LIMIT = 5;
 
     private final GeneratedBoardRepository generatedBoardRepository;
     private final UserBoardRepository userBoardRepository;
@@ -173,14 +172,64 @@ public class BoardService {
      * finished board has nothing to resume.
      *
      * @param username the user, as carried by the bearer token
-     * @return that user's {@value #RECENT_BOARD_LIMIT} most recent in-progress boards, newest
-     * activity first
+     * @return that user's five most recent in-progress boards, newest activity first
      */
     @Transactional(readOnly = true)
-    public Page<UserBoard> listBoards(String username) {
+    public List<UserBoard> listBoards(String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new IllegalArgumentException("Unknown user: " + username));
-        return userBoardRepository.findByStatusAndUserIdOrderByLastModifiedAtDesc(
-                BoardStatus.IN_PROGRESS, user.getId(), Pageable.ofSize(RECENT_BOARD_LIMIT));
+        return userBoardRepository.findFirst5ByStatusAndUserIdOrderByLastModifiedAtDesc(
+                BoardStatus.IN_PROGRESS, user.getId());
+    }
+
+    /**
+     * Totals a player's lifetime board stats, per difficulty and overall.
+     *
+     * <p>Everything comes out of a single grouped aggregate, so this costs one query no matter how
+     * many boards the player has and never pulls a grid into memory. The overall figures are folded
+     * from the per-tier rows rather than queried again.
+     *
+     * @param username the user, as carried by the bearer token
+     * @return that user's stats; a player with no boards gets zeroes, no best time, and a zero row
+     *         for every tier
+     * @throws IllegalArgumentException if {@code username} does not resolve to a user
+     */
+    @Transactional(readOnly = true)
+    public BoardStatsResponse retrieveStats(String username) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown user: " + username));
+
+        Map<BoardDifficulty, DifficultyStats> played = userBoardRepository
+                .aggregateByDifficulty(user.getId(), BoardStatus.COMPLETED, BoardStatus.IN_PROGRESS)
+                .stream()
+                .collect(Collectors.toMap(DifficultyStats::getDifficulty, Function.identity()));
+
+        long solved = 0;
+        long totalPlayTime = 0;
+        Long best = null;
+        Map<String, BoardStatsResponse.DifficultyBreakdown> byDifficulty = new LinkedHashMap<>();
+
+        // Walking the tiers rather than the aggregate's rows fills in the ones the player has never
+        // been dealt and keeps the breakdown in easiest-to-hardest order whatever the query returns.
+        for (BoardDifficulty difficulty : BoardDifficulty.values()) {
+            DifficultyStats stats = played.get(difficulty);
+            if (stats == null) {
+                byDifficulty.put(difficulty.dbValue(),
+                        new BoardStatsResponse.DifficultyBreakdown(0, 0, null, 0, 0));
+                continue;
+            }
+            solved += stats.getBoardsSolved();
+            totalPlayTime += stats.getTotalPlayTime();
+            // A tier the player has started but never finished aggregates to a null best time, so
+            // it contributes to the totals without dragging the overall best down to nothing.
+            Long tierBest = stats.getBestTime();
+            if (tierBest != null) {
+                best = best == null ? tierBest : Math.min(best, tierBest);
+            }
+            byDifficulty.put(difficulty.dbValue(), new BoardStatsResponse.DifficultyBreakdown(
+                    stats.getBoardsSolved(), stats.getBoardsInProgress(), tierBest,
+                    stats.getSolvedPlayTime(), stats.getTotalPlayTime()));
+        }
+        return new BoardStatsResponse(solved, best, totalPlayTime, byDifficulty);
     }
 }
