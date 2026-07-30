@@ -11,23 +11,31 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
 import org.springframework.context.annotation.Import;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Exercises the derived board-listing query against the real MySQL schema. The filtering, the
- * ordering, and the page cap are all executed by the query Spring Data derives from the method
- * name, so nothing short of a database can tell whether they actually happen — this is also what
- * catches a method name that no longer resolves against the entity.
+ * Exercises the board-listing query and the stats aggregate against the real MySQL schema. The
+ * filtering, the ordering, and the cap of five are all executed by the query Spring Data derives
+ * from the method name, so nothing short of a database can tell whether they actually happen —
+ * this is also what catches a method name that no longer resolves against the entity.
+ *
+ * <p>The aggregate needs a database for a second reason: {@link DifficultyStats} is an interface
+ * projection, and Spring binds its getters to the query's {@code AS} aliases when a row comes back,
+ * not when the context starts. A renamed alias still compiles and still boots — only executing the
+ * query catches it, so every getter is asserted here.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -77,20 +85,19 @@ class UserBoardRepositoryTest {
         entityManager.flush();
         entityManager.clear();
 
-        Page<UserBoard> page = userBoardRepository.findByStatusAndUserIdOrderByLastModifiedAtDesc(
-                BoardStatus.IN_PROGRESS, ownerId, Pageable.ofSize(5));
+        List<UserBoard> listed = userBoardRepository.findFirst5ByStatusAndUserIdOrderByLastModifiedAtDesc(
+                BoardStatus.IN_PROGRESS, ownerId);
 
-        assertEquals(5, page.getNumberOfElements(), "the page is capped at the requested size");
-        assertEquals(7, page.getTotalElements(), "all seven resumable boards match the filter");
+        assertEquals(5, listed.size(), "the listing is capped at five even though seven match");
 
-        List<Long> returned = page.getContent().stream().map(UserBoard::getId).toList();
+        List<Long> returned = listed.stream().map(UserBoard::getId).toList();
         List<Long> newestFiveNewestFirst = inProgress.reversed().subList(0, 5);
         assertEquals(newestFiveNewestFirst, returned,
                 "the five most recently played in-progress boards, newest activity first");
 
-        assertTrue(page.getContent().stream().allMatch(b -> b.getStatus() == BoardStatus.IN_PROGRESS),
+        assertTrue(listed.stream().allMatch(b -> b.getStatus() == BoardStatus.IN_PROGRESS),
                 "a completed board has nothing to resume and must not be listed");
-        assertTrue(page.getContent().stream().allMatch(b -> b.getUserId().equals(ownerId)),
+        assertTrue(listed.stream().allMatch(b -> b.getUserId().equals(ownerId)),
                 "the listing is scoped to its own user");
     }
 
@@ -100,10 +107,78 @@ class UserBoardRepositoryTest {
         entityManager.flush();
         entityManager.clear();
 
-        Page<UserBoard> page = userBoardRepository.findByStatusAndUserIdOrderByLastModifiedAtDesc(
-                BoardStatus.IN_PROGRESS, ownerId, Pageable.ofSize(5));
+        assertTrue(userBoardRepository.findFirst5ByStatusAndUserIdOrderByLastModifiedAtDesc(
+                BoardStatus.IN_PROGRESS, ownerId).isEmpty());
+    }
 
-        assertTrue(page.isEmpty());
+    @Test
+    void aggregatesEveryTotalTheStatsPathReadsForATier() {
+        completedBoard(ownerId, BoardDifficulty.EASY, 300);
+        completedBoard(ownerId, BoardDifficulty.EASY, 120);
+        inProgressBoard(ownerId, BoardDifficulty.EASY, 60);
+        entityManager.flush();
+        entityManager.clear();
+
+        DifficultyStats easy = aggregateFor(ownerId).get(BoardDifficulty.EASY);
+
+        assertNotNull(easy, "a tier the player has been dealt is reported");
+        assertEquals(BoardDifficulty.EASY, easy.getDifficulty(),
+                "the tier comes back as the enum, not the raw database string");
+        assertEquals(2, easy.getBoardsSolved());
+        assertEquals(1, easy.getBoardsInProgress());
+        assertEquals(Long.valueOf(120), easy.getBestTime(),
+                "the fastest completion in the tier, not the most recent one");
+        assertEquals(420, easy.getSolvedPlayTime(),
+                "the solved boards only — this is what a mean solve time is computed from");
+        assertEquals(480, easy.getTotalPlayTime(),
+                "time on the unfinished board counts too, so this is more than the solved boards");
+    }
+
+    @Test
+    void reportsNoBestTimeForATierWithNothingFinishedYet() {
+        inProgressBoard(ownerId, BoardDifficulty.MODERATE, 90);
+        entityManager.flush();
+        entityManager.clear();
+
+        DifficultyStats moderate = aggregateFor(ownerId).get(BoardDifficulty.MODERATE);
+
+        assertNotNull(moderate, "a tier started but never finished still reports");
+        assertEquals(0, moderate.getBoardsSolved());
+        assertEquals(1, moderate.getBoardsInProgress());
+        assertNull(moderate.getBestTime(),
+                "MIN over no completed board is null, not zero — the service folds the overall best "
+                        + "around exactly this, and a zero here would win it outright");
+        assertEquals(0, moderate.getSolvedPlayTime(), "no solved board means no solve time");
+        assertEquals(90, moderate.getTotalPlayTime(),
+                "but the time on the unfinished one is still time played");
+    }
+
+    @Test
+    void omitsTiersThePlayerHasNotBeenDealt() {
+        completedBoard(ownerId, BoardDifficulty.EASY, 300);
+        // The only hard board in the table belongs to someone else.
+        completedBoard(otherPlayerId, BoardDifficulty.HARD, 10);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertEquals(Set.of(BoardDifficulty.EASY), aggregateFor(ownerId).keySet(),
+                "an unplayed tier is an absent row here — the service is what turns it into the "
+                        + "zero row the API reports — and another player's boards are not this "
+                        + "player's stats");
+    }
+
+    @Test
+    void aggregatesNothingForAPlayerWithNoBoards() {
+        assertTrue(userBoardRepository.aggregateByDifficulty(
+                        ownerId, BoardStatus.COMPLETED, BoardStatus.IN_PROGRESS).isEmpty(),
+                "no rows at all is what the service turns into a zero row for every tier");
+    }
+
+    private Map<BoardDifficulty, DifficultyStats> aggregateFor(Integer userId) {
+        return userBoardRepository
+                .aggregateByDifficulty(userId, BoardStatus.COMPLETED, BoardStatus.IN_PROGRESS)
+                .stream()
+                .collect(Collectors.toMap(DifficultyStats::getDifficulty, Function.identity()));
     }
 
     private Integer persistUser(String username) {
@@ -121,6 +196,18 @@ class UserBoardRepositoryTest {
         UserBoard board = new UserBoard(userId, BoardDifficulty.EASY, PUZZLE, SOLUTION);
         board.saveProgress(SOLUTION, Map.of(), 300);
         return stampLastModified(entityManager.persistFlushFind(board).getId(), lastModifiedAt);
+    }
+
+    private void completedBoard(Integer userId, BoardDifficulty difficulty, long elapsedSeconds) {
+        UserBoard board = new UserBoard(userId, difficulty, PUZZLE, SOLUTION);
+        board.saveProgress(SOLUTION, Map.of(), elapsedSeconds);
+        entityManager.persist(board);
+    }
+
+    private void inProgressBoard(Integer userId, BoardDifficulty difficulty, long elapsedSeconds) {
+        UserBoard board = new UserBoard(userId, difficulty, PUZZLE, SOLUTION);
+        board.saveProgress(PUZZLE, Map.of(), elapsedSeconds);
+        entityManager.persist(board);
     }
 
     /**

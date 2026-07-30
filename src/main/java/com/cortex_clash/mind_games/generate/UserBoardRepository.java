@@ -3,10 +3,10 @@ package com.cortex_clash.mind_games.generate;
 import com.cortex_clash.mind_games.domain.BoardStatus;
 import com.cortex_clash.mind_games.domain.UserBoard;
 import jakarta.persistence.LockModeType;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -19,16 +19,15 @@ import java.util.Optional;
 public interface UserBoardRepository extends JpaRepository<UserBoard, Long> {
 
     /**
-     * Lists a page of a user's boards in one status, most recently played first. The page limit
-     * applies after the status filter, so a player with a long tail of finished puzzles still gets
-     * a full page of the ones they can resume.
+     * Lists a user's five most recently played boards in one status, newest activity first. The
+     * limit applies after the status filter, so a player with a long tail of finished puzzles still
+     * gets five of the ones they can resume.
      *
-     * @param status   the status to list
-     * @param userId   the owning user
-     * @param pageable which slice of that ordering to return
-     * @return one page of that user's boards in that status, newest activity first
+     * @param status the status to list
+     * @param userId the owning user
+     * @return at most five of that user's boards in that status, newest activity first
      */
-    Page<UserBoard> findByStatusAndUserIdOrderByLastModifiedAtDesc(BoardStatus status, Integer userId, Pageable pageable);
+    List<UserBoard> findFirst5ByStatusAndUserIdOrderByLastModifiedAtDesc(BoardStatus status, Integer userId);
 
     /**
      * Looks up one of a user's boards. Scoping the lookup by {@code userId} is what stops one user
@@ -64,4 +63,32 @@ public interface UserBoardRepository extends JpaRepository<UserBoard, Long> {
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<UserBoard> findLockedByIdAndUserId(Long id, Integer userId);
+
+    /**
+     * Totals one user's boards per difficulty tier. Counting in the database keeps the stats path
+     * off the boards themselves — each row carries three 81-char grids and a notes blob that no
+     * counter needs.
+     *
+     * <p>The grouping is over every board the user owns, not just their completed ones, so a tier
+     * they have started but never finished still returns a row — with a null {@code bestTime}.
+     *
+     * @param userId     the owning user
+     * @param completed  the status counted as solved
+     * @param inProgress the status counted as unfinished
+     * @return one row per tier the user has played; tiers they have never been dealt are absent
+     */
+    @Query("""
+            SELECT b.difficulty AS difficulty,
+                   SUM(CASE WHEN b.status = :completed THEN 1 ELSE 0 END) AS boardsSolved,
+                   SUM(CASE WHEN b.status = :inProgress THEN 1 ELSE 0 END) AS boardsInProgress,
+                   SUM(CASE WHEN b.status = :completed THEN b.elapsedSeconds ELSE 0 END) AS solvedPlayTime,
+                   SUM(b.elapsedSeconds) AS totalPlayTime,
+                   MIN(CASE WHEN b.status = :completed THEN b.elapsedSeconds END) AS bestTime
+            FROM UserBoard b
+            WHERE b.userId = :userId
+            GROUP BY b.difficulty
+            """)
+    List<DifficultyStats> aggregateByDifficulty(@Param("userId") Integer userId,
+                                                @Param("completed") BoardStatus completed,
+                                                @Param("inProgress") BoardStatus inProgress);
 }

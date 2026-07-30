@@ -15,6 +15,7 @@ import com.cortex_clash.mind_games.api.requests.ResetPassword;
 import com.cortex_clash.mind_games.api.requests.RevealHint;
 import com.cortex_clash.mind_games.api.requests.SaveBoardProgress;
 import com.cortex_clash.mind_games.api.responses.BoardResponse;
+import com.cortex_clash.mind_games.api.responses.BoardStatsResponse;
 import com.cortex_clash.mind_games.api.responses.MatchResponse;
 import com.cortex_clash.mind_games.auth.AuthService;
 import com.cortex_clash.mind_games.auth.InvalidPasswordException;
@@ -288,18 +289,33 @@ public class ApiController {
     }
 
     /**
-     * Lists the caller's unfinished boards, most recently played first, so the frontend can offer
-     * to resume one. Each carries its full state, including the solution. Completed boards are not
-     * listed here — the save that finished one is the last the frontend hears of it.
+     * Lists the caller's five most recently played unfinished boards, newest activity first, so the
+     * frontend can offer to resume one. Each carries its full state, including the solution.
+     * Completed boards are not listed here — the save that finished one is the last the frontend
+     * hears of it — and the cap applies after that filter, so a long history of finished puzzles
+     * does not crowd out the resumable ones.
      *
      * @param principal the authenticated user
-     * @return the caller's in-progress boards, newest activity first
+     * @return at most five of the caller's in-progress boards, newest activity first
      */
     @GetMapping("/v1/boards")
     public List<BoardResponse> boards(Principal principal) {
         return boardService.listBoards(principal.getName()).stream()
                 .map(BoardResponse::from)
                 .toList();
+    }
+
+    /**
+     * Reports the caller's lifetime board stats: boards solved, best completion time, and total
+     * time played, both overall and broken out per difficulty.
+     *
+     * @param principal the authenticated user
+     * @return the caller's stats; every tier is reported, so a player who has never been dealt a
+     *         board gets zeroes and a null best time throughout
+     */
+    @GetMapping("/v1/board/stats")
+    public BoardStatsResponse boardStats(Principal principal) {
+        return boardService.retrieveStats(principal.getName());
     }
 
     /**
