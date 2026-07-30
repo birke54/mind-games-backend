@@ -1,4 +1,6 @@
 spring:
+  threads:
+    virtual: true
   application:
     name: mind-games-backend
   # Auth is entirely JWT-based (see JwtAuthenticationFilter); no UserDetailsService bean exists, so
