@@ -6,6 +6,7 @@ import com.cortex_clash.mind_games.domain.User;
 import com.cortex_clash.mind_games.domain.UserAudit;
 import com.cortex_clash.mind_games.domain.UserStatus;
 import com.cortex_clash.mind_games.mail.PasswordResetLinkIssued;
+import com.cortex_clash.mind_games.metrics.MetricsService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -44,10 +45,11 @@ class PasswordResetServiceTest {
     private final UserRepository userRepository = mock(UserRepository.class);
     private final UserAuditRepository userAuditRepository = mock(UserAuditRepository.class);
     private final RefreshTokenService refreshTokenService = mock(RefreshTokenService.class);
+    private final MetricsService metricsService = mock(MetricsService.class);
     private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
 
     private final PasswordResetService service = new PasswordResetService(
-            tokenRepository, userRepository, userAuditRepository, refreshTokenService, events,
+            tokenRepository, userRepository, userAuditRepository, refreshTokenService, metricsService, events,
             30, 3, RESET_URL);
 
     /** The link the service asked to have delivered, or a failure if it asked for no delivery. */

@@ -1,5 +1,6 @@
 package com.cortex_clash.mind_games.auth;
 
+import com.cortex_clash.mind_games.metrics.MetricsService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -15,7 +16,9 @@ import static org.mockito.Mockito.when;
 class RefreshTokenCleanupJobTest {
 
     private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
-    private final RefreshTokenCleanupJob job = new RefreshTokenCleanupJob(refreshTokenRepository);
+    private final MetricsService metricsService = mock(MetricsService.class);
+    private final RefreshTokenCleanupJob job =
+            new RefreshTokenCleanupJob(refreshTokenRepository, metricsService);
 
     @Test
     void purgesUsingACutoffAtRoughlyNow() {

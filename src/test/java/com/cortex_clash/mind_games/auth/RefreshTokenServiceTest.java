@@ -3,6 +3,7 @@ package com.cortex_clash.mind_games.auth;
 import com.cortex_clash.mind_games.domain.RefreshToken;
 import com.cortex_clash.mind_games.domain.User;
 import com.cortex_clash.mind_games.domain.UserStatus;
+import com.cortex_clash.mind_games.metrics.MetricsService;
 import com.cortex_clash.mind_games.security.JwtService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -36,8 +37,9 @@ class RefreshTokenServiceTest {
     private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
     private final UserRepository userRepository = mock(UserRepository.class);
     private final JwtService jwtService = new JwtService(SECRET, 60);
+    private final MetricsService metricsService = mock(MetricsService.class);
     private final RefreshTokenService service =
-            new RefreshTokenService(refreshTokenRepository, userRepository, jwtService, 30);
+            new RefreshTokenService(refreshTokenRepository, userRepository, jwtService, metricsService, 30);
 
     private RefreshToken storedToken() {
         return new RefreshToken(USER_ID, "family-1", "hash",

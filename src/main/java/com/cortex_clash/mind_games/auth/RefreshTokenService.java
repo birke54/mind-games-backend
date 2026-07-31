@@ -3,6 +3,9 @@ package com.cortex_clash.mind_games.auth;
 import com.cortex_clash.mind_games.api.ApiController;
 import com.cortex_clash.mind_games.domain.RefreshToken;
 import com.cortex_clash.mind_games.domain.User;
+import com.cortex_clash.mind_games.metrics.MetricName;
+import com.cortex_clash.mind_games.metrics.MetricsService;
+import com.cortex_clash.mind_games.metrics.TagName;
 import com.cortex_clash.mind_games.security.JwtService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +17,7 @@ import javax.security.auth.login.CredentialException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Map;
 import java.util.UUID;
 
 import static com.cortex_clash.mind_games.auth.OpaqueTokens.sha256;
@@ -33,16 +37,19 @@ public class RefreshTokenService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final UserRepository userRepository;
     private final JwtService jwtService;
+    private final MetricsService metricService;
     private final long refreshExpirationDays;
 
     public RefreshTokenService(RefreshTokenRepository refreshTokenRepository,
                                UserRepository userRepository,
                                JwtService jwtService,
+                               MetricsService metricsService,
                                @Value("${app.jwt.refresh-expiration-days}") long refreshExpirationDays) {
         this.refreshTokenRepository = refreshTokenRepository;
         this.userRepository = userRepository;
         this.jwtService = jwtService;
         this.refreshExpirationDays = refreshExpirationDays;
+        this.metricService = metricsService;
     }
 
     /** Issues a brand-new refresh token in a fresh family. Returns the raw token for the client. */
@@ -61,6 +68,7 @@ public class RefreshTokenService {
                 .orElse(null);
         if (stored == null) {
             log.warn("Invalid refresh token");
+            metricService.recordCounter(MetricName.REFRESH_TOKEN_ERROR_COUNT, Map.of(TagName.REASON, RefreshTokenFailureReason.INVALID_TOKEN));
             throw new CredentialException("Invalid refresh token");
         }
         if (stored.getRevokedAt() != null) {
@@ -68,6 +76,7 @@ public class RefreshTokenService {
             // checked before the user lookup: reuse detection is about the token's lineage and must
             // not depend on the user still existing.
             log.warn("Refresh token reuse detected: userId {}, familyId {}", stored.getUserId(), stored.getFamilyId());
+            metricService.recordCounter(MetricName.REFRESH_TOKEN_ERROR_COUNT, Map.of(TagName.REASON, RefreshTokenFailureReason.REVOKED_TOKEN));
             refreshTokenRepository.revokeFamily(stored.getFamilyId(), Instant.now());
             throw new CredentialException("Refresh token reuse detected");
         }
@@ -75,6 +84,7 @@ public class RefreshTokenService {
             .orElse(null);
         if (user == null) {
             log.warn("Refresh token for unknown: userId {}, familyId {}", stored.getUserId(), stored.getFamilyId());
+
             throw new CredentialException("Refresh token for unknown user");
         }
         if (stored.getExpiresAt().isBefore(Instant.now())) {
