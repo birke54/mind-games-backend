@@ -1,5 +1,7 @@
 package com.cortex_clash.mind_games.auth;
 
+import com.cortex_clash.mind_games.metrics.MetricName;
+import com.cortex_clash.mind_games.metrics.MetricsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -18,14 +20,16 @@ public class RefreshTokenCleanupJob {
     private static final Logger log = LoggerFactory.getLogger(RefreshTokenCleanupJob.class);
 
     private final RefreshTokenRepository refreshTokenRepository;
+    private final MetricsService metricsService;
 
     /**
      * Constructs a new refresh token cleanup job.
      *
      * @param refreshTokenRepository the repository used to delete expired refresh tokens
      */
-    public RefreshTokenCleanupJob(RefreshTokenRepository refreshTokenRepository) {
+    public RefreshTokenCleanupJob(RefreshTokenRepository refreshTokenRepository, MetricsService metricsService) {
         this.refreshTokenRepository = refreshTokenRepository;
+        this.metricsService = metricsService;
     }
 
     /**
@@ -38,5 +42,6 @@ public class RefreshTokenCleanupJob {
     public void purgeExpiredTokens() {
         int deleted = refreshTokenRepository.deleteExpiredBefore(Instant.now());
         log.info("Purged {} expired refresh token(s)", deleted);
+        metricsService.recordCounter(MetricName.REFRESH_TOKEN_CLEANUP_SUCCESS_COUNT, null);
     }
 }

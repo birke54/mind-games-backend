@@ -4,6 +4,9 @@ import com.cortex_clash.mind_games.domain.AuditAction;
 import com.cortex_clash.mind_games.domain.User;
 import com.cortex_clash.mind_games.domain.UserAudit;
 import com.cortex_clash.mind_games.domain.UserStatus;
+import com.cortex_clash.mind_games.metrics.MetricName;
+import com.cortex_clash.mind_games.metrics.MetricsService;
+import com.cortex_clash.mind_games.metrics.TagName;
 import com.cortex_clash.mind_games.security.JwtService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.security.auth.login.CredentialException;
+import java.util.Map;
 
 @Service
 public class AuthService {
@@ -37,16 +41,18 @@ public class AuthService {
     private final RefreshTokenService refreshTokenService;
     private final UserAuditService userAuditService;
     private final PasswordEncoder passwordEncoder;
+    private final MetricsService metricsService;
 
     public AuthService(UserRepository userRepository, UserAuditRepository userAuditRepository,
                        JwtService jwtService, RefreshTokenService refreshTokenService,
-                       UserAuditService userAuditService) {
+                       UserAuditService userAuditService, MetricsService metricsService) {
         this.userRepository = userRepository;
         this.userAuditRepository = userAuditRepository;
         this.jwtService = jwtService;
         this.refreshTokenService = refreshTokenService;
         this.userAuditService = userAuditService;
         this.passwordEncoder = new BCryptPasswordEncoder();
+        this.metricsService = metricsService;
     }
 
     @Transactional
@@ -65,9 +71,11 @@ public class AuthService {
             // constraint. Record the failure in a SEPARATE transaction so the audit survives this
             // transaction's rollback.
             logger.warn("Registration failed for username={}", user.getUsername(), e);
+            metricsService.recordCounter(MetricName.USER_REGISTRATION_ERROR_COUNT, Map.of(TagName.REASON, RegistrationFailureReason.CONCURRENT_REGISTRATION));
             userAuditService.recordFailedRegistration(user.getUsername());
             throw e;
         }
+        metricsService.recordCounter(MetricName.USER_REGISTRATION_SUCCESS_COUNT, null);
         userAuditRepository.save(new UserAudit(user.getUsername(), AuditAction.USER_REGISTERED));
         return user;
     }
@@ -76,24 +84,34 @@ public class AuthService {
         // Cheap in-memory checks first, so malformed input is rejected before any DB round-trip.
         if (username.length() > User.USERNAME_MAX_LENGTH) {
             logger.warn("Username too long: {}", username);
+            metricsService.recordCounter(MetricName.USER_REGISTRATION_ERROR_COUNT, Map.of(TagName.REASON, RegistrationFailureReason.USERNAME_LENGTH));
             throw new IllegalArgumentException("Username too long: " + username);
         }
         if (email.length() > User.EMAIL_MAX_LENGTH) {
             logger.warn("Email too long: {}", email);
+            metricsService.recordCounter(MetricName.USER_REGISTRATION_ERROR_COUNT, Map.of(TagName.REASON, RegistrationFailureReason.EMAIL_LENGTH));
             throw new IllegalArgumentException("Email too long: " + email);
         }
         // TODO: Validate email is in a valid format.
         // Same policy the reset flow enforces: a password you may register with is a password you
         // may reset to, and vice versa.
-        PasswordPolicy.validate(username, password, false, userRepository, passwordEncoder);
+        try {
+            PasswordPolicy.validate(username, password, false, userRepository, passwordEncoder, metricsService);
+        } catch (InvalidPasswordException e) {
+            metricsService.recordCounter(MetricName.USER_REGISTRATION_ERROR_COUNT,
+                    Map.of(TagName.REASON, RegistrationFailureReason.PASSWORD_POLICY_FAILURE));
+            throw e;
+        }
 
         // DB existence checks last (the UNIQUE constraint is the authoritative guard under races).
         if (userRepository.existsByUsername(username)) {
             logger.warn("Username already taken: {}", username);
+            metricsService.recordCounter(MetricName.USER_REGISTRATION_ERROR_COUNT, Map.of(TagName.REASON, RegistrationFailureReason.USERNAME_TAKEN));
             throw new IllegalArgumentException("Username already taken: " + username);
         }
         if (userRepository.existsByEmail(email)) {
             logger.warn("Email already registered: {}", email);
+            metricsService.recordCounter(MetricName.USER_REGISTRATION_ERROR_COUNT, Map.of(TagName.REASON, RegistrationFailureReason.EMAIL_TAKEN));
             throw new IllegalArgumentException("Email already registered: " + email);
         }
     }
@@ -108,6 +126,7 @@ public class AuthService {
         User user = userRepository.findByUsername(username).orElse(null);
         if (user == null) {
             logger.warn("Unknown username: {}", username);
+            metricsService.recordCounter(MetricName.USER_AUTHENTICATION_ERROR_COUNT, Map.of(TagName.REASON, AuthenticateUserFailureReason.UNKNOWN_USER));
             // Compare against a dummy hash so unknown-user and wrong-password paths
             // take the same time (prevents timing-based user enumeration).
             passwordEncoder.matches(password, DUMMY_HASH);
@@ -116,9 +135,11 @@ public class AuthService {
         }
         if (!passwordEncoder.matches(password, user.getPasswordHash())) {
             logger.warn("Incorrect password for user: {}", username);
+            metricsService.recordCounter(MetricName.USER_AUTHENTICATION_ERROR_COUNT, Map.of(TagName.REASON, AuthenticateUserFailureReason.INVALID_PASSWORD));
             user.setFailedAttempts(user.getFailedAttempts() + 1);
             if (user.getFailedAttempts() >= LOCKOUT_THRESHOLD) {
                 logger.warn("Account locked for user: {}", username);
+                metricsService.recordCounter(MetricName.USER_AUTHENTICATION_ERROR_COUNT, Map.of(TagName.REASON, AuthenticateUserFailureReason.LOCKED_OUT_USER));
                 user.setStatus(UserStatus.LOCKED_OUT);
             }
             userRepository.save(user);
@@ -127,9 +148,11 @@ public class AuthService {
                 userAuditRepository.save(new UserAudit(username, AuditAction.LOCKOUT));
                 // A locked account's existing sessions should not survive.
                 refreshTokenService.revokeAllForUser(user.getId());
+
             }
             throw new CredentialException("Invalid username or password");
         }
+        metricsService.recordCounter(MetricName.USER_AUTHENTICATION_SUCCESS_COUNT, null);
         if (user.getFailedAttempts() != 0) {
             user.setFailedAttempts(0);
             userRepository.save(user);

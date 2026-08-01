@@ -6,6 +6,9 @@ import com.cortex_clash.mind_games.domain.User;
 import com.cortex_clash.mind_games.domain.UserAudit;
 import com.cortex_clash.mind_games.domain.UserStatus;
 import com.cortex_clash.mind_games.mail.PasswordResetLinkIssued;
+import com.cortex_clash.mind_games.metrics.MetricName;
+import com.cortex_clash.mind_games.metrics.MetricsService;
+import com.cortex_clash.mind_games.metrics.TagName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Map;
 
 import static com.cortex_clash.mind_games.auth.OpaqueTokens.sha256;
 
@@ -48,6 +52,7 @@ public class PasswordResetService {
     private final RefreshTokenService refreshTokenService;
     private final ApplicationEventPublisher events;
     private final PasswordEncoder passwordEncoder;
+    private final MetricsService metricsService;
 
     /** How long a reset link stays redeemable. */
     private final long tokenExpirationMinutes;
@@ -62,6 +67,7 @@ public class PasswordResetService {
                                 UserRepository userRepository,
                                 UserAuditRepository userAuditRepository,
                                 RefreshTokenService refreshTokenService,
+                                MetricsService metricsService,
                                 ApplicationEventPublisher events,
                                 @Value("${app.password-reset.token-expiration-minutes}") long tokenExpirationMinutes,
                                 @Value("${app.password-reset.max-requests-per-hour}") int maxRequestsPerHour,
@@ -70,6 +76,7 @@ public class PasswordResetService {
         this.userRepository = userRepository;
         this.userAuditRepository = userAuditRepository;
         this.refreshTokenService = refreshTokenService;
+        this.metricsService = metricsService;
         this.events = events;
         this.passwordEncoder = new BCryptPasswordEncoder();
         this.tokenExpirationMinutes = tokenExpirationMinutes;
@@ -106,10 +113,12 @@ public class PasswordResetService {
         if (user == null) {
             // Deliberately silent. See above: saying anything here is the whole vulnerability.
             log.info("Password reset requested for an address with no account");
+            metricsService.recordCounter(MetricName.USER_PASSWORD_RESET_REQUEST_ERROR_COUNT, Map.of(TagName.REASON, PasswordResetFailureReason.UNKNOWN_USER));
             return;
         }
         if (isOverRateLimit(user)) {
             log.warn("Password reset rate limit hit for user: {}", user.getUsername());
+            metricsService.recordCounter(MetricName.USER_PASSWORD_RESET_REQUEST_ERROR_COUNT, Map.of(TagName.REASON, PasswordResetFailureReason.RESET_ATTEMPTS_EXCEEDED));
             return;
         }
 
@@ -129,6 +138,7 @@ public class PasswordResetService {
         // row it depends on, and a failed one cannot reach the caller: it has already been answered.
         events.publishEvent(new PasswordResetLinkIssued(user, resetUrl + "?token=" + rawToken));
         log.info("Password reset link issued for user: {}", user.getUsername());
+        metricsService.recordCounter(MetricName.USER_PASSWORD_RESET_REQUEST_SUCCESS_COUNT, null);
     }
 
     /**
@@ -157,14 +167,17 @@ public class PasswordResetService {
                 .orElse(null);
         if (token == null) {
             log.warn("Password reset attempted with an unknown token");
+            metricsService.recordCounter(MetricName.USER_PASSWORD_RESET_ERROR_COUNT, Map.of(TagName.REASON, PasswordResetFailureReason.INVALID_TOKEN));
             throw new InvalidResetTokenException("Unknown reset token");
         }
         if (token.getUsedAt() != null) {
             log.warn("Password reset attempted with an already-used token: userId {}", token.getUserId());
+            metricsService.recordCounter(MetricName.USER_PASSWORD_RESET_ERROR_COUNT, Map.of(TagName.REASON, PasswordResetFailureReason.USED_TOKEN));
             throw new InvalidResetTokenException("Reset token already used");
         }
         if (token.getExpiresAt().isBefore(Instant.now())) {
             log.warn("Password reset attempted with an expired token: userId {}", token.getUserId());
+            metricsService.recordCounter(MetricName.USER_PASSWORD_RESET_ERROR_COUNT, Map.of(TagName.REASON, PasswordResetFailureReason.EXPIRED_TOKEN));
             throw new InvalidResetTokenException("Reset token expired");
         }
 
@@ -173,12 +186,19 @@ public class PasswordResetService {
             // The FK is ON DELETE CASCADE, so this should be unreachable; treat it as a bad token
             // rather than a 500.
             log.warn("Reset token for unknown user: userId {}", token.getUserId());
+            metricsService.recordCounter(MetricName.USER_PASSWORD_RESET_ERROR_COUNT, Map.of(TagName.REASON, PasswordResetFailureReason.UNKNOWN_USER));
             throw new InvalidResetTokenException("Reset token for unknown user");
         }
 
         // Validate before spending the token, so a rejected password does not cost the user their
         // link and force them back to their inbox.
-        PasswordPolicy.validate(user.getUsername(), newPassword, true, userRepository, passwordEncoder);
+        try {
+            PasswordPolicy.validate(user.getUsername(), newPassword, true, userRepository, passwordEncoder, metricsService);
+        } catch (InvalidPasswordException e) {
+            metricsService.recordCounter(MetricName.USER_PASSWORD_RESET_ERROR_COUNT,
+                    Map.of(TagName.REASON, PasswordResetFailureReason.PASSWORD_POLICY_FAILURE));
+            throw e;
+        }
 
         token.markUsed();
         passwordResetTokenRepository.save(token);
@@ -189,6 +209,7 @@ public class PasswordResetService {
         userRepository.save(user);
 
         refreshTokenService.revokeAllForUser(user.getId());
+        metricsService.recordCounter(MetricName.USER_PASSWORD_RESET_SUCCESS_COUNT, null);
         userAuditRepository.save(
                 new UserAudit(user.getUsername(), AuditAction.PASSWORD_RESET_COMPLETED));
         log.info("Password reset completed for user: {}", user.getUsername());

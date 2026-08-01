@@ -1,10 +1,14 @@
 package com.cortex_clash.mind_games.auth;
 
 import com.cortex_clash.mind_games.domain.User;
+import com.cortex_clash.mind_games.metrics.MetricName;
+import com.cortex_clash.mind_games.metrics.MetricsService;
+import com.cortex_clash.mind_games.metrics.TagName;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -20,6 +24,7 @@ public final class PasswordPolicy {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final MetricsService metricsService;
 
     /**
      * Minimum password length. Anything shorter is brute-forceable offline; {@code a} is currently
@@ -39,9 +44,10 @@ public final class PasswordPolicy {
      */
     public static final int MAX_LENGTH_BYTES = 30;
 
-    private PasswordPolicy(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+    private PasswordPolicy(UserRepository userRepository, PasswordEncoder passwordEncoder, MetricsService metricsService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.metricsService = metricsService;
     }
 
     /**
@@ -53,8 +59,8 @@ public final class PasswordPolicy {
      * @param userRepository the repository to query for existing user data
      * @throws InvalidPasswordException if the password is null, blank, too short, or too long
      */
-    public static void validate(String username, String password, Boolean isPasswordReset, UserRepository userRepository, PasswordEncoder passwordEncoder) {
-        new PasswordPolicy(userRepository, passwordEncoder).validateInstance(username, password, isPasswordReset);
+    public static void validate(String username, String password, Boolean isPasswordReset, UserRepository userRepository, PasswordEncoder passwordEncoder, MetricsService metricsService) {
+        new PasswordPolicy(userRepository, passwordEncoder, metricsService).validateInstance(username, password, isPasswordReset);
     }
 
     /**
@@ -65,15 +71,18 @@ public final class PasswordPolicy {
      */
     private void validateInstance(String username, String password, Boolean isPasswordReset) {
         if (password == null || password.isBlank()) {
+            metricsService.recordCounter(MetricName.PASSWORD_POLICY_ERROR_COUNT, Map.of(TagName.REASON, PasswordPolicyFailureReason.PASSWORD_EMPTY));
             throw new InvalidPasswordException("Password must not be blank");
         }
         if (password.length() < MIN_LENGTH) {
+            metricsService.recordCounter(MetricName.PASSWORD_POLICY_ERROR_COUNT, Map.of(TagName.REASON, PasswordPolicyFailureReason.PASSWORD_LENGTH));
             throw new InvalidPasswordException(
                     "Password must be at least " + MIN_LENGTH + " characters");
         }
         // Counted in bytes, not characters: a password of accented characters or emoji encodes to
         // more than one byte each, so it hits the ceiling well short of 30 characters.
         if (password.getBytes(StandardCharsets.UTF_8).length > MAX_LENGTH_BYTES) {
+            metricsService.recordCounter(MetricName.PASSWORD_POLICY_ERROR_COUNT, Map.of(TagName.REASON, PasswordPolicyFailureReason.PASSWORD_LENGTH));
             throw new InvalidPasswordException(
                     "Password must be at most " + MAX_LENGTH_BYTES + " bytes");
         }
@@ -81,6 +90,7 @@ public final class PasswordPolicy {
             Optional<User> existingUser = userRepository.findByUsername(username);
             String existingPasswordHash = existingUser.map(User::getPasswordHash).orElse(null);
             if (passwordEncoder.matches(password, existingPasswordHash)) {
+                metricsService.recordCounter(MetricName.PASSWORD_POLICY_ERROR_COUNT, Map.of(TagName.REASON, PasswordPolicyFailureReason.MATCHES_EXISTING));
                 throw new InvalidPasswordException("New password must be different from existing password");
             }
         }
