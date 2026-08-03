@@ -24,9 +24,9 @@ import java.security.MessageDigest;
  * same-named header the viewer sends, so it cannot be forged from outside.
  *
  * <p>Runs ahead of the Spring Security chain: an unverified request is refused before any
- * authentication or business logic runs. The ALB's health check talks to the container directly and
- * never traverses CloudFront, so {@code /actuator/**} is exempt — without that exemption every task
- * would fail its health check and ECS would kill it in a loop.
+ * authentication or business logic runs. It guards the application port only — actuator listens on
+ * its own port, which this filter never sees, so the ALB health check and the metrics scrape reach
+ * it without carrying the header.
  *
  * <p>Disabled when {@code app.security.origin-verify-secret} is blank, which is the case for local
  * development and lets the filter be deployed before CloudFront exists.
@@ -50,12 +50,9 @@ public class OriginVerificationFilter extends OncePerRequestFilter {
         this.enabled = !secret.isBlank();
     }
 
-    /**
-     * Health probes arrive straight from the ALB, bypassing CloudFront, so they carry no header.
-     */
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !enabled || request.getRequestURI().startsWith("/actuator/");
+        return !enabled;
     }
 
     @Override

@@ -88,7 +88,7 @@ and the two password-reset endpoints. Everything else needs `Authorization: Bear
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/ping` | Liveness for humans; `GET /actuator/health` for load balancers. |
+| `GET /api/ping` | Liveness for humans. Load balancers use `GET /actuator/health/readiness` on the management port (9090), not this. |
 | `POST /api/v1/register` | Create an account. 201, or 400 on a weak password, or 409 on a taken username/email. |
 | `POST /api/v1/authenticate_user` | Access token in the body, refresh token in an HttpOnly cookie. |
 | `POST /api/v1/refresh` | Trade the refresh cookie for a new access token; the refresh token rotates. |
