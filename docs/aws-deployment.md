@@ -30,6 +30,7 @@ The task definition supplies these. **Bold = no default; the app fails to start 
 | `JWT_REFRESH_EXPIRATION_DAYS` | no | `30` | Refresh-token lifetime. |
 | `JWT_REFRESH_CLEANUP_CRON` | no | `0 0 3 * * *` | Nightly token purge. |
 | `COOKIE_SECURE` | no | `true` | Keep `true` in AWS (TLS terminates at the gateway). |
+| `MANAGEMENT_PORT` | no | `9090` | Actuator port, separate from the app's 8080. ALB health check and metrics scrape target it. |
 | **`BOARD_GRADING_EASY_MAX_THRESHOLD`** | **yes/no** | — | Max grade score for EASY. |
 | **`BOARD_GRADING_MODERATE_MAX_THRESHOLD`** | **yes/no** | — | Max grade score for MODERATE. |
 | **`BOARD_GRADING_HARD_MAX_THRESHOLD`** | **yes/no** | — | Max score for HARD; above it a board is skipped. |
@@ -184,11 +185,17 @@ ALB_ARN=$(aws elbv2 create-load-balancer --name $APP-alb --scheme internal \
   --type application --subnets $SUBNET_A $SUBNET_B --security-groups $ALB_SG \
   --query 'LoadBalancers[0].LoadBalancerArn' --output text)
 
-# target-type ip because Fargate uses awsvpc networking
+# target-type ip because Fargate uses awsvpc networking. Traffic goes to 8080; the health check
+# goes to 9090, where actuator listens (--health-check-port is independent of the traffic port).
 TG_ARN=$(aws elbv2 create-target-group --name $APP-tg \
   --protocol HTTP --port 8080 --vpc-id $VPC_ID --target-type ip \
-  --health-check-path /actuator/health --health-check-interval-seconds 15 \
+  --health-check-port 9090 \
+  --health-check-path /actuator/health/readiness --health-check-interval-seconds 15 \
   --healthy-threshold-count 2 --query 'TargetGroups[0].TargetGroupArn' --output text)
+
+# The ALB reaches the management port as well as the app port.
+aws ec2 authorize-security-group-ingress --group-id $APP_SG \
+  --protocol tcp --port 9090 --source-group $ALB_SG
 
 aws elbv2 create-listener --load-balancer-arn $ALB_ARN \
   --protocol HTTP --port 80 \
@@ -198,6 +205,14 @@ aws elbv2 create-listener --load-balancer-arn $ALB_ARN \
 TLS terminates at API Gateway, so the internal ALB listener can be plain HTTP on 80. API Gateway
 forwards `X-Forwarded-Proto: https`, which the app trusts (`forward-headers-strategy: framework`),
 so `COOKIE_SECURE=true` behaves correctly.
+
+**Why `/actuator/health/readiness` and not `/actuator/health`.** The aggregate folds in every health
+indicator, including `mail` — so an unreachable SES marks the task unhealthy and ECS kills a service
+that can still deal boards and authenticate. The readiness group is scoped to `readinessState,db`
+(`application.yaml`), which is the set that actually determines whether this instance can serve a
+request. Note that with RDS unreachable the endpoint *hangs* on Hikari's connection timeout rather
+than answering DOWN quickly; the ALB's health-check timeout (default 5s, and it must stay below the
+15s interval) is what converts that into a failed check.
 
 ---
 
@@ -216,7 +231,7 @@ Register the task definition (`taskdef.json` — fill in the ARNs, thresholds, a
   "containerDefinitions": [{
     "name": "app",
     "image": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/mind-games:latest",
-    "portMappings": [{ "containerPort": 8080 }],
+    "portMappings": [{ "containerPort": 8080 }, { "containerPort": 9090 }],
     "environment": [
       { "name": "DB_URL", "value": "jdbc:mysql://RDS_ENDPOINT:3306/mindgames?useSSL=true&serverTimezone=UTC&characterEncoding=utf8" },
       { "name": "DB_USERNAME", "value": "appuser" },
@@ -230,7 +245,7 @@ Register the task definition (`taskdef.json` — fill in the ARNs, thresholds, a
       { "name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:mind-games/db-password" }
     ],
     "healthCheck": {
-      "command": ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health/readiness || exit 1"],
+      "command": ["CMD-SHELL", "wget -qO- http://localhost:9090/actuator/health/readiness || exit 1"],
       "interval": 30, "timeout": 5, "retries": 3, "startPeriod": 90
     },
     "logConfiguration": {
@@ -364,8 +379,12 @@ endpoint, and this app signs its own HMAC tokens with jjwt.
 
 ```bash
 API=$(aws apigatewayv2 get-api --api-id $API_ID --query ApiEndpoint --output text)
-curl -s $API/actuator/health          # {"status":"UP"}
 curl -s $API/api/ping                  # public endpoint
+
+# Actuator is not reachable here: it listens on 9090, and no API Gateway route targets it.
+# Check health from inside the VPC, or read the target group's view of it:
+aws elbv2 describe-target-health --target-group-arn $TG_ARN \
+  --query 'TargetHealthDescriptions[].TargetHealth.State' --output text
 
 # Register (public). 201 + {"username":"..."} on success, 409 on a duplicate.
 curl -i -X POST "$API/api/v1/register" -H 'Content-Type: application/json' \
@@ -431,9 +450,9 @@ in **Count** mode first.
 **Closing the bypass.** execute-api stays publicly reachable, so anyone with that URL skips CloudFront
 and therefore skips WAF. CloudFront injects `X-Origin-Verify` on every origin request (and strips any
 same-named header from the viewer, so it cannot be forged); `OriginVerificationFilter` rejects
-anything arriving without it. `/actuator/**` is exempt — the ALB health-checks the container directly
-and never traverses CloudFront, and without the exemption ECS would fail every check and kill tasks in
-a loop.
+anything arriving without it. The filter guards the application port only: actuator listens on 9090,
+which the filter never sees, so the ALB health check and the metrics scrape reach it without a header
+while every `/api` route on 8080 stays gated.
 
 **Deploy order matters.** The filter is disabled while `ORIGIN_VERIFY_SECRET` is blank, so:
 

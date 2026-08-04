@@ -20,6 +20,11 @@ repositories {
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-web'
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	// Adds /actuator/prometheus (OpenMetrics text) alongside the JSON /actuator/metrics, so a
+	// scraping time-series DB can read the MetricsService counters. Runtime-only: the export
+	// auto-configuration already ships in the actuator starter and switches on when this registry
+	// appears on the classpath, so nothing compiles against it.
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 	implementation 'org.springframework.security:spring-security-crypto'

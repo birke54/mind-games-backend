@@ -66,18 +66,41 @@ server:
   # Let in-flight requests finish when ECS sends SIGTERM (deploys/scale-in) before the JVM exits.
   shutdown: graceful
 
-# Only the health endpoint is exposed over HTTP. Kubernetes-style liveness/readiness probes are
-# enabled so orchestrators/load balancers can distinguish "process up" from "ready for traffic".
+# Actuator listens on its own port, not the application port, so the operational surface can be
+# reached without also reaching the API. That separation is what lets a metrics scraper be handed
+# port 9090 alone; if the endpoints sat on 8080, anything allowed in to scrape would also be able
+# to call every /api route directly, around CloudFront, WAF, and OriginVerificationFilter. It also
+# means a future API Gateway catch-all route cannot re-expose actuator by accident.
+#
+# Spring Security's chain does apply to this port, but health and prometheus are both permitAll
+# (a scraper has no token and cannot obtain one), so anything that can reach 9090 can read the
+# metrics. The security group is the real boundary — never attach this port to an internet-facing
+# load balancer.
+#
+# Kubernetes-style liveness/readiness probes are enabled so orchestrators/load balancers can
+# distinguish "process up" from "ready for traffic". The ALB health-checks /actuator/health/readiness
+# on this port, not the aggregate /actuator/health: the aggregate folds in the mail indicator, so an
+# unreachable SES would mark every task unhealthy and ECS would kill a service that can still deal
+# boards and authenticate.
+#
+# Readiness defaults to readinessState alone, which only reports that the app finished starting — it
+# would stay UP with the database gone. Adding db keeps the check honest: no database means no
+# request this service handles can succeed, so it should leave the load balancer rotation.
 management:
+  server:
+    port: ${MANAGEMENT_PORT:9090}
   endpoints:
     web:
       exposure:
-        include: health,metrics
+        include: health,prometheus
   endpoint:
     health:
       probes:
         enabled: true
       show-details: never
+      group:
+        readiness:
+          include: readinessState,db
 
 app:
   jwt:

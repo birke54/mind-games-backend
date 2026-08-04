@@ -44,6 +44,12 @@ public class SecurityConfig {
                                 // Health probes for the load balancer / orchestrator.
                                 "/actuator/health",
                                 "/actuator/health/**",
+                                // Metrics scrape. This chain is built in the main context but also
+                                // applies to the management context, so without this the scraper
+                                // gets a 403 — it has no token and cannot obtain one. Only mapped
+                                // on the management port, so permitting it here does not expose
+                                // anything on the application port.
+                                "/actuator/prometheus",
                                 // Spring ERROR-dispatches thrown exceptions here; without this the
                                 // filter chain denies the dispatch and every error becomes a blank 403.
                                 "/error",
