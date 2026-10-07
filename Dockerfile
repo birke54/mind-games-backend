@@ -3,7 +3,7 @@
 # ---- Build stage: compile and produce the executable jar ----
 # NOTE: this project targets Java 26 / Spring Boot 4.1. Verify these image tags exist before
 # building; if a JRE image isn't published for 26 yet, use eclipse-temurin:26-jdk for runtime too.
-FROM eclipse-temurin:26-jdk AS build
+FROM eclipse-temurin:27-jdk AS build
 WORKDIR /workspace
 
 # Warm the Gradle dependency cache first so source-only changes don't re-download everything.
@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/root/.gradle \
     && cp build/libs/*.jar app.jar
 
 # ---- Runtime stage: minimal JRE, non-root ----
-FROM eclipse-temurin:26-jre AS runtime
+FROM eclipse-temurin:27-jre AS runtime
 WORKDIR /app
 
 # Run as an unprivileged user.
